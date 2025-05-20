@@ -5,44 +5,30 @@ The primary goal of this chapter is to analyze carnivore occupancy patterns acro
 
 The repository is structured around two core RMarkdown files:
 
-    01_preprocessing.Rmd
-    Prepares and harmonizes raw camera trap data from multiple sites. This includes:
-
-        Data cleaning and formatting
-
-        Spatial data preparation
-
-        Site-level covariate extraction
-
-        Detection history creation
-
-    02_main_model.Rmd
+    Co-occurenece_pre-processing.Rmd
+    Prepares and harmonises raw camera trap data from multiple sites. This includes:
+        Creating sptaial dataframes
+        Preparing layout files for detecttion history creaation
+        Prepareing detecction data for detection history creation
+        Extracting cpatial covatriates
+        
+    Co-occurence_main.Rmd
     Implements and runs a spatial multi-species occupancy model using spOccupancy. This step includes:
-
-        Model specification (detection and occupancy components)
-
-        Prior selection
-
-        MCMC fitting
-
+        Detection history matrix creation
+        Spatial data matrix creation
+        Effort matrix creation
+        Detection matrices creation
+        Covariate selection
+        Model selection and comparison
         Diagnostics and summary of results
-
-        Visualization of spatial patterns
+        Visualisation of spatial patterns
 
 Requirements
 
 This project is written in R and uses the following key packages:
-
-    spOccupancy
-
+    spOccupanc
     tidyverse
-
     sf
-
-    raster / terra
-
+    terra
     ggplot2
-
-    here
-
-    knitr, rmarkdown
+    
