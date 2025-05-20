@@ -1,0 +1,390 @@
+---
+title: "Co-occurence main"
+author: "Emily"
+date: "2025-05-08"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(spOccupancy)
+```
+
+# Import raw station layout data files 
+
+```{r}
+#read data
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+
+# List all CSV files in the working directory
+files <- list.files(pattern = "\\.csv$")
+
+# Loop through each file and assign it based on its naming convention: -cap for capture data, -lay for station operation datess, -sp for station location
+for (file in files) {
+  # Extract base name without file extension and remove '_clean' part
+  base <- tools::file_path_sans_ext(file)
+  base <- sub("_clean", "", base)
+  # Identify the type of file and assign it accordingly
+  if (grepl("data", base)) {
+    ds <- sub("data", "", base)
+    assign(paste0(ds, "cap"), read.csv(file, header = TRUE))
+  } else if (grepl("layout.+spatial", base)) {
+    ds <- sub("layout", "", sub("_spatial", "", base))
+    assign(paste0(ds, "sp"), read.csv(file, header = TRUE))
+  } else if (grepl("layout", base)) {
+    ds <- sub("layout", "", base)
+    assign(paste0(ds, "lay"), read.csv(file, header = TRUE, check.names = FALSE))
+  }
+}
+```
+
+# Data preparation
+
+## Formating DATE and LOC_ID columns
+
+```{r}
+# List of all objects
+datasets <- ls()  
+
+# Loop through each cap dataset to format date
+for (ds in datasets) {
+  if (grepl("cap$", ds)) {  # Select objects that name ends with "cap"
+    df <- get(ds)
+    df$DATE <- as.Date(df$DATE, format = "%Y-%m-%d")  # Convert DATE column to Date
+    assign(ds, df, envir = .GlobalEnv)
+  }
+}
+
+# Loop through each lay dataset to format date, remove blank rows/columns and add LOC-ID column name
+for (ds in datasets) {
+  if (grepl("lay$", ds)) { # Select objects that name ends with "lay"
+    df <- get(ds)
+    colnames(df) <- as.Date(colnames(df), format = "%d/%m/%Y") # Convert column names (dates)
+    colnames(df)[1] <- "LOC_ID" # Name the first column LOC_ID
+    keep_cols <- colSums(!(is.na(df) | df == "")) > 0  # Identify columns that are not empty
+    df <- df[, keep_cols] # Drop columns that are completely empty
+    keep_rows <- rowSums(!(is.na(df) | df == "")) > 0  # Identify rows that are not empty
+    df <- df[keep_rows, ] # Drop rows that are completely empty
+    assign(ds, df, envir = .GlobalEnv)
+  }
+}
+
+# Loop through to read LOC_ID as character in layout files
+for (ds in datasets) {
+  if (grepl("lay$", ds)) {
+  df <- get(ds)
+  df$LOC_ID <- as.character(df$LOC_ID)
+  assign(ds, df, envir = .GlobalEnv)
+  }
+}
+```
+
+## Shrink occasion length and calculate effort per week and create matrix for fieldseason variable
+
+```{r}
+for (ds in datasets) {
+  if (grepl("cap$", ds)) { # Select cap files
+    df_capture <- get(ds)
+    df_capture <- df_capture %>%
+    mutate(DATE = as.Date(DATE, format = "%Y-%m-%d"), WEEK = format(DATE, "%Y-%U")) # Use DATE to add WEEK column and values
+    assign(ds, df_capture, envir = .GlobalEnv) # Overwrite the original
+  }
+  # Process layout datasets: create weekly status, effort, and fieldseason matrix
+  if (grepl("lay$", ds)) {df_lay <- get(ds)
+      lay_long <- df_lay %>%
+      pivot_longer(-LOC_ID, names_to = "date", values_to = "status") %>%
+      mutate(
+        date = as.Date(date, format = "%Y-%m-%d"),
+        WEEK = format(date, "%Y-%U")
+      ) # Pivot to long
+    
+    # Weekly operational (1 if any day active)
+    weekly <- lay_long %>%
+      group_by(LOC_ID, WEEK) %>%
+      summarise(lay_status = as.integer(any(status == 1, na.rm = TRUE)), .groups = "drop") %>%
+      pivot_wider(names_from = WEEK, values_from = lay_status)
+    
+    # Weekly effort (count of active days)
+    eff_weekly <- lay_long %>%
+      group_by(LOC_ID, WEEK) %>%
+      summarise(effort = sum(status == 1, na.rm = TRUE), .groups = "drop") %>%
+      pivot_wider(names_from = WEEK, values_from = effort)
+    
+    # Fieldseason covariate matrix: replace 1s with file name (minus "lay")
+    prefix <- sub("lay$", "", ds)
+    lay_fs <- weekly
+    lay_fs[,-1] <- lapply(lay_fs[,-1], function(col) ifelse(col == 1, prefix, NA))
+    
+    # Assign new objects back
+    assign(paste0(prefix, "week"), weekly, envir = .GlobalEnv)
+    assign(paste0(prefix, "eff"), eff_weekly, envir = .GlobalEnv)
+    assign(paste0(prefix, "fs"), lay_fs, envir = .GlobalEnv)
+  }
+}
+```
+
+## Create detection histories
+
+```{r}
+#Prepare lists
+week_names <- grep("week$", ls(), value = TRUE) #detection files
+cap_names <- grep("cap$", ls(), value = TRUE) # capture files
+site_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  get(name)$LOC_ID})))) #full list of sites
+week_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  colnames(get(name))[-1]})))) # full list of weeks ([-1] excludes LOC_ID column)
+species_list <- sort(unique(unlist(lapply(cap_names, function(name) {
+  unique(get(name)$Species)})))) #full list of species
+
+# Remove low detection species - edit as necessary
+species_list <- setdiff(species_list, "Cheetah")
+
+# Create empty array with lists
+y_array <- array(NA, dim = c(length(species_list), length(site_list), length(week_list)),
+                 dimnames = list(Species = species_list, Site = site_list, Week = week_list))
+
+# Loop through each pair of cap and week datasets to fill y_array
+for (i in seq_along(cap_names)) {
+  cap_data <- get(cap_names[i])
+  week_data <- get(week_names[i])
+  for (w in seq_along(week_list)) {
+    week_str <- week_list[w]
+    # Subset capture data for current week
+    cap_sub <- cap_data %>%
+      filter(WEEK == week_str)
+    # Subset layout data for current week
+    if (!week_str %in% colnames(week_data)) next
+    layout_sub <- week_data %>%
+      select(LOC_ID, all_of(week_str)) %>%
+      rename(op_status = 2)
+    for (s in seq_along(site_list)) {
+      site <- site_list[s]
+      # Get operational status
+      site_active <- layout_sub$op_status[layout_sub$LOC_ID == site]
+      site_active <- ifelse(length(site_active) == 0, NA, site_active[1])
+      for (sp in seq_along(species_list)) {
+        species <- species_list[sp]
+        if (!is.na(site_active) && site_active == 1) {
+          detected <- any(cap_sub$LOC_ID == site & cap_sub$Species == species)
+          y_array[sp, s, w] <- ifelse(detected, 1, 0)
+        } else if (is.na(y_array[sp, s, w])) {
+          y_array[sp, s, w] <- NA
+        }
+      }
+    }
+  }
+}
+
+# Calculate the number of total detections by week for each species
+detection_totals <- apply(y_array, 1, function(x) sum(x, na.rm = TRUE))
+
+# Reorder array
+#ordered_species <- names(sort(detection_totals, decreasing = TRUE))
+#species_index <- match(ordered_species, dimnames(y_array)[[1]])
+#y_array <- y_array[species_index,,]
+#dimnames(y_array)[[3]] <- ordered_species
+```
+
+## Create spatial matrix (sites x coords)
+
+```{r}
+sp_list <- lapply(datasets[grepl("sp$", datasets)], get) # Select spatial dataframes
+coords <- do.call(rbind, sp_list) # Merge 
+coords <- coords[!duplicated(coords$LOC_ID), ] # Drop duplicate sites (From yearly repeat studies
+coords <- coords[order(coords$LOC_ID), ] # Order alphabetically by LOC_ID
+rownames(coords) <- coords$LOC_ID # Set LOC_ID as rownames
+coords <- as.matrix(coords[, c("X_AfricaAlbers", "Y_AfricaAlbers")]) # Convert to a numeric matrix, using LOC_ID as rownames
+coords <- coords[rownames(coords) %in% colnames(y_array), , drop = FALSE] # Remove rows which arent in y array
+```
+
+##  Create effort matrix (sites × weeks)
+
+```{r}
+eff_names <- grep("eff$", ls(), value = TRUE) # Identify all effort dataset names
+
+# Pivot each to long form and stack them
+eff_long <- lapply(eff_names, function(name) {
+  df <- get(name)
+  df %>%
+    pivot_longer(-LOC_ID, names_to = "Week", values_to = "effort")
+}) %>% bind_rows()
+
+# Re-pivot to a single wide table, filling missing with NA
+eff_merged <- eff_long %>%
+  pivot_wider(
+    names_from   = Week,
+    values_from  = effort,
+    values_fill  = NA
+  )
+
+# Sort rows (LOC_ID) alphabetically, and columns (Week) oldest→newest
+eff_merged <- eff_merged %>%
+  arrange(LOC_ID) %>%
+  select(LOC_ID, sort(names(.)[-1]))  # keep LOC_ID first, then sorted weeks
+
+# Convert to numeric matrix, dropping LOC_ID
+effort_matrix <- as.matrix(eff_merged[ , -1, drop = FALSE])
+rownames(effort_matrix) <- eff_merged$LOC_ID
+effort_matrix[effort_matrix == 0] <- NA # Replace all 0s (no effort) with NA
+storage.mode(effort_matrix) <- "double"
+```
+
+## Create field season matrix (sites × weeks)
+```{r}
+fs_names <- grep("fs$", ls(), value = TRUE) # Identify all fieldseason dataset names
+
+# Pivot each to long form and stack them : LOC_ID | Week | fieldseason
+fs_long <- lapply(fs_names, function(name) {
+  df <- get(name)
+  df %>%
+    pivot_longer(-LOC_ID, names_to = "Week", values_to = "fieldseason")
+}) %>% bind_rows()
+
+# Re-pivot to a single wide table, filling missing with NA
+fs_merged <- fs_long %>%
+  pivot_wider(
+    names_from   = Week,
+    values_from  = fieldseason,
+    values_fill  = NA
+  )
+
+# Sort rows (LOC_ID) alphabetically, and columns (Week) oldest→newest
+fs_merged <- fs_merged %>%
+  arrange(LOC_ID) %>%
+  select(LOC_ID, sort(names(.)[-1]))  # keep LOC_ID first, then sorted weeks
+
+# Convert to numeric matrix, dropping LOC_ID
+fieldseason_matrix <- as.matrix(fs_merged[ , -1, drop = FALSE])
+rownames(fieldseason_matrix) <- fs_merged$LOC_ID
+storage.mode(fieldseason_matrix) <- "character"
+fieldseason_matrix[fieldseason_matrix == "NULL"] <- NA
+```
+# Covaraite correlation matrix
+```{r}
+
+```
+
+
+# Create occupancy data list
+
+```{r}
+occ_data <- list(
+  y = y_array,
+  det.covs = list(effort = effort_matrix, 
+                  fieldseason = fieldseason_matrix),
+  coords = coords
+)
+```
+
+# Run spatial multi species model
+
+```{r}
+# Run multi-species occupancy model
+occ_model <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ effort, #+ as.factor(fieldseason),
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 400,
+                       batch.length = 200,
+                       n.burn = 5000,
+                       n.thin = 5,
+                       n.chains = 3)
+```
+
+## Posterior checks
+
+```{r}
+# Trace plots for convergence
+plot(occ_model, 'beta', density = FALSE)
+
+# Model validation --------------------------------------------------------
+# Perform a posterior predictive check to assess model fit.
+ppc.out <- ppcOcc(occ_model, fit.stat = 'freeman-tukey', group = 1)
+# Calculate a Bayesian p-value as a simple measure of Goodness of Fit.
+# Bayesian p-values between 0.1 and 0.9 indicate adequate model fit.
+summary(ppc.out)
+
+# Model comparison --------------------------------------------------------
+# Compute Widely Applicable Information Criterion (WAIC)
+# Lower values indicate better model fit.
+waicOcc(occ_model)
+
+# Posterior summaries -----------------------------------------------------
+# Concise summary of main parameter estimates
+summary(occ_model, level = 'both')
+```
+
+# Trouble shooting
+
+## Detection history issue - run per site to find where missing species data is
+
+```{r}
+# Prepare lists
+week_names <- grep("RRWMA2018week", ls(), value = TRUE) #detection files
+cap_names <- grep("RRWMA2018cap", ls(), value = TRUE) # capture files
+site_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  get(name)$LOC_ID
+})))) #full list of sites
+week_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  colnames(get(name))[-1]  # Exclude LOC_ID column
+})))) #full list of weeks
+species_list <- sort(unique(unlist(lapply(cap_names, function(name) {
+  unique(get(name)$Species)
+})))) #full list of species
+
+
+# Initialize empty array
+y_array <- array(NA, dim = c(length(species_list), length(site_list), length(week_list)),
+                 dimnames = list(Species = species_list, Site = site_list, Week = week_list))
+
+# Fill the array from all datasets
+# Loop through each pair of cap and week datasets
+for (i in seq_along(cap_names)) {
+  cap_data <- get(cap_names[i])
+  week_data <- get(week_names[i])
+
+  for (w in seq_along(week_list)) {
+    week_str <- week_list[w]
+    # Subset capture data for current week
+    cap_sub <- cap_data %>%
+      filter(WEEK == week_str)
+    # Subset layout data for current week
+    if (!week_str %in% colnames(week_data)) next
+    layout_sub <- week_data %>%
+      select(LOC_ID, all_of(week_str)) %>%
+      rename(op_status = 2)
+    for (s in seq_along(site_list)) {
+      site <- site_list[s]
+      # Get operational status
+      site_active <- layout_sub$op_status[layout_sub$LOC_ID == site]
+      site_active <- ifelse(length(site_active) == 0, NA, site_active[1])
+      for (sp in seq_along(species_list)) {
+        species <- species_list[sp]
+        if (!is.na(site_active) && site_active == 1) {
+          detected <- any(cap_sub$LOC_ID == site & cap_sub$Species == species)
+          y_array[sp, s, w] <- ifelse(detected, 1, 0)
+        } else if (is.na(y_array[sp, s, w])) {
+          y_array[sp, s, w] <- NA
+        }
+      }
+    }
+  }
+}
+
+# Count detections
+detection_totals <- apply(y_array, 1, function(x) sum(x, na.rm = TRUE))
+detection_totals
+```
+

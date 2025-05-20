@@ -1,0 +1,643 @@
+---
+title: "Co-occurence pre-processing"
+author: "Emily"
+date: "2025-05-08"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(sf)
+library(terra)
+library(rnaturalearth)
+```
+
+# Site pre-processing
+
+## Import raw station layout data files 
+                                                
+```{r}
+# read Ruaha-Rungwa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTtrap_layouts")
+
+RRlayoutMIO2018 <- read.csv("TZ_RR_MIO-2018_CT trap layout_midday.csv", header = FALSE)
+RRlayoutRNP2018 <- read.csv("TZ_RR_RNP-2018_CT trap layout_midday.csv", header = FALSE)
+RRlayoutWMA2018 <- read.csv("TZ_RR_WMA-2018_CT trap layout_midday.csv", header = FALSE)
+RRlayoutRGI2019 <- read.csv("TZ_RR_RGI-2019_CT trap layout_midday.csv", header = FALSE)
+
+# read Selous-Nyerere data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTtrap_layouts")
+
+SNlayoutNMTL2020 <- read.csv("TZ_SN_NMTL-2020_CT trap layout_midday.csv", header = FALSE)
+SNlayoutSKPE2021 <- read.csv("TZ_SN_SKPE-2021_CT trap layout_midday.csv", header = FALSE)
+SNlayoutSKPW2021 <- read.csv("TZ_SN_SKPW-2021_CT trap layout_midday.csv", header = FALSE)
+SNlayoutSLWN2021 <- read.csv("TZ_SN_SLWN-2021_CT trap layout_midday.csv", header = FALSE)
+SNlayoutSMGN2021 <- read.csv("TZ_SN_SMGN-2021_CT trap layout_midday_excl missing data.csv", header = FALSE)
+SNlayoutNKLC2022 <- read.csv("TZ_SN_NKLC-2022_CT trap layout_midday.csv", header = FALSE)
+SNlayoutNMSK2022 <- read.csv("TZ_SN_NMSK-2022_CT trap layout_midday.csv", header = FALSE)
+
+# read Lower Luangwa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTtrap_layouts")
+
+ZBlayoutLL2020 <- read.csv("ZB-LU-2020_CT layout midday.csv", header = TRUE)
+ZBlayoutLL2021 <- read.csv("ZB-LU-2021_CT layout midday.csv", header = TRUE)
+ZBlayoutLL2022 <- read.csv("ZB-LU-2022_CT layout midday.csv", header = TRUE)
+
+# read Rufunsa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTtrap_layouts")
+
+ZBlayoutR2020 <- read.csv("ZB-RUF-2020_CT layout midday.csv", header = TRUE)
+ZBlayoutR2021 <- read.csv("ZB-RUF-2021_CT layout midday.csv", header = TRUE)
+ZBlayoutR2022 <- read.csv("ZB-RUF-2022_CT layout midday.csv", header = TRUE)
+```
+
+## Create spatial dataframes
+
+### Tanzania
+
+```{r}
+datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022") 
+
+# Loop through sites to extract spatial data 
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[, 1:3] # Keep only the first 3 columns LOC_ID, X, Y
+  obj <- obj[-c(1, 2), ] # Remove the first two rows - they are blank
+  colnames(obj) <- as.character(obj[1, ]) # Set new row 1 as column names
+  obj <- obj[-1, ] # Remove the new first row which repeats the column names
+  new_name <- paste0(ds, "_spatial") # Save to a new object with "_spatial" suffix
+  assign(new_name, obj, envir = .GlobalEnv)
+}
+
+# List new datasets
+datasets <- c( "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial")
+
+# Loop through all datasets and remove rows with missing coordinates - this is just removing blank rows that shouldn't be there
+for (ds in datasets) {
+  df <- get(ds)
+  df_clean <- df[!(is.na(df$X_UTM37S) | is.na(df$Y_UTM37S) |
+                   df$X_UTM37S == "" | df$Y_UTM37S == ""), ] # Remove rows where X or Y is NA or blank
+  assign(ds, df_clean, envir = .GlobalEnv) # Assign cleaned data back to the environment
+}
+
+# Project into Africa Albers
+# Define Africa Albers Equal Area CRS
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+# UMT37S datasets
+datasets <- c( "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial")
+
+# Define UTM Zone 37S CRS (EPSG:32737)
+utm_37s_crs <- st_crs(32737)
+
+# Loop through each dataset to project to Africa Albers
+for (ds in datasets) {
+  df <- get(ds)
+  df_sf <- st_as_sf(df, coords = c("X_UTM37S", "Y_UTM37S"), crs = utm_37s_crs) # Convert to sf object with UTM coordinates
+  df_aea <- st_transform(df_sf, crs = africa_albers_crs) # Transform to Africa Albers
+  coords_aea <- st_coordinates(df_aea) # Extract numeric coordinates
+  df_final <- data.frame(LOC_ID = df$LOC_ID,
+                         X_AfricaAlbers = coords_aea[, 1],
+                         Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
+  assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
+}
+
+# List UTM36S datasets
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial")
+
+# UTM Zone 36S CRS
+utm_36s_crs <- st_crs(32736)
+
+# Loop through each dataset to project to Africa Albers
+for (ds in datasets) {
+  df <- get(ds)
+  df_sf <- st_as_sf(df, coords = c("X_UTM37S", "Y_UTM37S"), crs = utm_36s_crs) # Convert to sf object using the coordinates (still named as 37S in columns, but actually 36S)
+  df_aea <- st_transform(df_sf, crs = africa_albers_crs) # Transform to Africa Albers
+  coords_aea <- st_coordinates(df_aea) # Extract numeric coordinate
+  df_final <- data.frame(LOC_ID = df$LOC_ID,
+                         X_AfricaAlbers = coords_aea[, 1],
+                         Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
+  assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
+}
+
+```
+
+### Zambia
+
+```{r}
+datasets <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
+
+# Change column name to LOC_ID and remove Cam ID column, collapse to per station not camera
+for (name in datasets) {
+  df <- get(name)
+  colnames(df)[1] <- "LOC_ID"  # Rename column to LOC_ID
+  df <- df[, -2]  # Remove the second column (Cam ID)
+  date_cols <- setdiff(names(df), c("LOC_ID", "Y", "X")) # Identify date columns
+  df <- df %>%
+    group_by(LOC_ID) %>%
+    summarise(
+      Y = first(Y), # Take first X coord (they should both be the same)
+      X = first(X), # Take first y coord (they should both be the same)
+      across(all_of(date_cols), ~ if (all(is.na(.))) NA else as.integer(any(. == 1, na.rm = TRUE))), .groups = "drop") # If one of the values is 1, print 1, if anything else print NA
+  df[is.na(df)] <- 0 # Change NAs to 0s to show station not operational
+  colnames(df)[-3] <- sub("^X", "", colnames(df)[-3]) # Remove X from dates (they currently have an X at the start of them)
+  assign(name, df, envir = .GlobalEnv) # Save back over original file
+}
+
+# Loop through sites to extract spatial data 
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[, 1:3] # Keep only the first 3 columns (LOC_ID, X, Y)
+  new_name <- paste0(ds, "_spatial") # Save to a new object with "_spatial" suffix
+  assign(new_name, obj, envir = .GlobalEnv)
+}
+
+# List new datasets
+datasets <- c("ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial")
+
+# Loop through and swap round Y and X columns for projection
+for (ds in datasets) {
+  df <- get(ds)  # Get the datasets
+  df <- df[, c(1, 3, 2)]  # Reorder columns: first column, then third, then second
+  assign(ds, df, envir = .GlobalEnv) # Overwrite the original dataset with the modified one
+}
+
+# Project into Africa Albers
+# Define Africa Albers Equal Area CRS
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+# Define WGS84 CRS for GPS coordinates
+wgs84_crs <- st_crs(4326)
+
+# Loop through each dataset in the list
+for (ds in datasets) {
+  df <- get(ds)
+  df_sf <- st_as_sf(df, coords = c("X", "Y"), crs = wgs84_crs)  # Convert to sf object with decimal degrees (WGS84) coordinate
+  df_aea <- st_transform(df_sf, crs = africa_albers_crs) # Transform to Africa Albers
+  coords_aea <- st_coordinates(df_aea) # Extract numeric coordinates (in meters in Africa Albers)
+  df_final <- data.frame(LOC_ID = df$LOC_ID,
+                         X_AfricaAlbers = coords_aea[, 1],
+                         Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
+  assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
+}
+```
+
+### Save spatial datasets to drive
+
+```{r}
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial")
+
+# Define output directory
+output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+
+# Loop through all datasets
+for (ds in datasets) {
+  file_name <- paste0(ds, ".csv")
+  file_path <- file.path(output_dir, file_name)
+  write.csv(get(ds), file = file_path, row.names = FALSE)
+}
+```
+
+## Prepare layout files for detection hitories  
+
+### Tanzania
+
+```{r}
+datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022")
+
+# Loop through to remove location data and end day date
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[-c(2,3), -c(2, 3)] # Remove row 2 and columns 2 & 3
+  obj[1, ] <- sub(" .*", "", obj[1, ]) # Keep only date part in row 1
+  colnames(obj) <- as.character(obj[1, ]) # Set row 1 as column names
+  obj <- obj[-1, ] # Remove the new first row
+  assign(ds, obj, envir = .GlobalEnv) # Assign cleaned dataset back to the environment
+}
+```
+
+### Zambia
+
+```{r}
+# NOTE: Relies on cleaned dataset from spatial layer creation
+datasets <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
+
+# Loop through and modify each dataset to remove location data and match date format to Tanzania: DD.MM.YYYY -> DD/MM/YYYY and remove name of first column LOC_ID
+for (ds in datasets) {
+  df <- get(ds)
+  df <- df[-c(2,3), -c(2, 3)] # Remove row 2 and columns 2 & 3
+  new_names <- colnames(df) 
+  date_cols <- grepl("^\\d{2}\\.\\d{2}\\.\\d{4}$" , new_names)# Identify which column names match the date pattern
+  new_names[date_cols] <- gsub("\\.", "/", new_names[date_cols]) # Replace dots with slashes in those column names
+  colnames(df) <- new_names  # Apply updated names and overwrite original dataset
+  names(df)[1] <- ""  # Remove name of first column
+  assign(ds, df, envir = .GlobalEnv)
+}
+
+#ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
+```
+
+### Save clean layout datasets
+
+```{r}
+datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022","ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
+
+# Define output directory
+output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+
+# Loop through all objects in the environment
+for (ds in datasets) {
+    file_name <- paste0(ds, "_clean.csv")
+    file_path <- file.path(output_dir, file_name)
+    write.csv(get(ds), file = file_path, row.names = FALSE)
+}
+```
+
+# Species pre-processing
+
+## Import raw detection data files
+```{r}
+# read Ruaha-Rungwa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTcapture_data")
+
+RRdataMIO2018 <- read.csv("TZ_RR_MIO-2018_CT captures_202408.csv", header = FALSE)
+RRdataRNP2018 <- read.csv("TZ_RR_RNP-2018_CT captures_202408.csv", header = FALSE)
+RRdataWMA2018 <- read.csv("TZ_RR_WMA-2018_CT captures_202408.csv", header = FALSE)
+RRdataRGI2019 <- read.csv("TZ_RR_RGI-2019_CT captures_202408.csv", header = FALSE)
+
+# read Selous-Nyerere data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTcapture_data")
+
+SNdataNMTL2020 <- read.csv("TZ_SN_NMTL-2020_CT captures_202405.csv", header = FALSE)
+SNdataSKPE2021 <- read.csv("TZ_SN_SKPE-2021_CT captures_202405.csv", header = FALSE)
+SNdataSKPW2021 <- read.csv("TZ_SN_SKPW-2021_CT captures_202405.csv", header = FALSE)
+SNdataSLWN2021 <- read.csv("TZ_SN_SLWN-2021_CT captures_202405.csv", header = FALSE)
+SNdataSMGN2021 <- read.csv("TZ_SN_SMGN-2021_CT captures_202405.csv", header = FALSE)
+SNdataNKLC2022 <- read.csv("TZ_SN_NKLC-2022_CT captures_202405.csv", header = FALSE)
+SNdataNMSK2022 <- read.csv("TZ_SN_NMSK-2022_CT captures_202405.csv", header = FALSE)
+
+# read Lower Luangwa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTcapture_data")
+
+ZBdataLL2020 <- read.csv("All_Species_2020.csv", header = TRUE)
+ZBdataLL2021 <- read.csv("All_Species_2021.csv", header = TRUE)
+ZBdataLL2022 <- read.csv("LLZ_BM_CT_LowerLuangwa_2022.csv", header = TRUE)
+
+# read Rufunsa data
+setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTcapture_data")
+
+ZBdataR2020 <- read.csv("All_Species_2020.csv", header = TRUE)
+ZBdataR2021 <- read.csv("All_Species_2021.csv", header = TRUE)
+ZBdataR2022 <- read.csv("All_Species_2022.csv", header = TRUE)
+```
+
+## Prepare detection data as lists and count detections per site x day x species
+
+### Tanzania
+
+```{r}
+# List of datasets
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022")
+
+# Loop over the datasets and set second row as column names and convert DATE to Date class
+for (ds in datasets) {
+  df <- get(ds) # Access the dataset using get() to modify it
+  df <- df[-1, ] # Remove the first row
+  colnames(df) <- df[1, ] # Set the second row as column names
+  df <- df[-1, ] # Remove the second row (now the header)
+  df$DATE <- as.Date(df$DATE, format = "%d/%m/%Y") # Convert DATE column to Date class
+  assign(ds, df) # Assign the cleaned data back to the original dataset name
+}
+
+# Count species detections per species per day per site
+species <- c("lion", "cheetah", "leopard", "spotted hyaena", "striped hyaena", 
+             "wild dog", "caracal", "serval", "civet", "honey badger", 
+             "wildcat", "bat-eared fox", "aardwolf", "b-b jackal", "s-s jackal")
+             
+# Initialize an empty list to store the results
+result_countsTZ <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    df <- get(ds) # get the dataset and use [[ to access the column
+    filtered_data <- df[df[[sp]] == 1, ] # Filter the dataset for rows where the species column has a value of 1
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Get the unique combinations of DATE and LOC_ID
+    total_unique_combinations <- nrow(unique_combinations) # Count the total number of unique combinations
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create a result name: dataset name_species
+    result_countsTZ[[result_name]] <- total_unique_combinations # Store the result in the list with the result name
+  }
+}
+
+# Extract 1 species to double check outputs (RRMIO2018 Lion - 46)
+lion_data <- RRdataMIO2018[RRdataMIO2018$lion == 1, ] # Filter the dataset for rows where the lion column has a value of 1
+unique_combinations <- unique(lion_data[, c("DATE", "LOC_ID")]) # Get the unique combinations of DATE and LOC_ID
+total_unique_combinations <- nrow(unique_combinations) # Count the total number of unique combinations
+total_unique_combinations # Print the result
+
+# Turn into list of detentions rather than a matrix
+
+# Loop through and subset each dataset to remove unwanted species and pivot into one row per detection
+for (ds in datasets) {
+  df <- get(ds)
+  cols_to_keep <- c(1:8, which(colnames(df) %in% species)) # Get all matching columns: first 8 + any from species list
+  cols_to_keep <- unique(cols_to_keep)  # Avoid duplicates
+  df <- df[, cols_to_keep]
+  species_cols <- intersect(colnames(df), species) # Identify columns that are in the species list
+  df <- df[!apply(df[, species_cols], 1, function(row) all(as.numeric(row) == 0)), ] # Remove rows where all remaining species columns are 0
+    df <- df %>%
+    pivot_longer(
+      cols = all_of(species_cols),
+      names_to = "Species",
+      values_to = "value"
+    ) %>%
+    filter(as.numeric(value) == 1) # Pivot longer and filter for presence == 1
+  assign(ds, df, envir = .GlobalEnv)
+}
+```
+
+### Zambia
+
+#### Lower Luangwa  
+
+```{r}
+# NOTE: These are processed separately as there are and different issues for each file
+
+# LL2020 cleaning
+ZBdataLL2020 <- ZBdataLL2020 %>% rename(Species = Tags, DATE = Date, LOC_ID = Area) # Rename columns To = From
+ZBdataLL2020 <- ZBdataLL2020 %>% mutate(Species = recode(Species,
+    "African Wild Dog" = "Wild Dog - Lycaon pictus",
+    "Wild Dog - Canis pictus" = "Wild Dog - Lycaon pictus",
+    "Spotted Hyena - Crocuta crocuta" = "Spotted Hyaena - Crocuta crocuta"
+  )) # Rename species
+ZBdataLL2020$LOC_ID <- gsub("[A-Za-z]", "", ZBdataLL2020$LOC_ID) # Clean LOC_ID to match layout dataframe
+ZBdataLL2020$DATE <- as.Date(ZBdataLL2020$DATE, format = "%d/%m/%Y") # Match date formats
+
+# LL2021 cleaning
+ZBdataLL2021 <- ZBdataLL2021 %>% rename(DATE = Date.and.Time, LOC_ID = Cell) # Rename columns
+ZBdataLL2021 <- ZBdataLL2021 %>% # Pivot for multiple species columns into 1
+  pivot_longer(
+    cols = c(Species.1, Species.2, Species.3),
+    names_to = "Species_Column",
+    values_to = "Species"
+  ) %>%
+  filter(!is.na(Species) & Species != "" & Species != "NA")  # Remove rows where Species was NA
+ZBdataLL2021$Species[ZBdataLL2021$Species == "Honeybadger - Mellivora capensis"] <-"Honey Badger - Mellivora capensis" # Rename species
+ZBdataLL2021$DATE <- as.Date(ZBdataLL2021$DATE, format = "%d/%m/%Y") # Match date formats
+
+# LL2022 cleaning
+# Split the data into Photo, Date, Time, Tag
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  mutate(
+    Photo = str_extract(PhotoDateTimeTag, "^.*(?=\\d{2}/\\d{2}/\\d{2})"), # Extract Photo (everything before the date
+    DATE = str_extract(PhotoDateTimeTag, "\\d{2}/\\d{2}/\\d{2}"), # Extract Date (DD/MM/YY)
+    Time = str_extract(PhotoDateTimeTag, "\\d{2}:\\d{2}:\\d{1,2}(?: [APM]{2})?"),# Extract Time (handles formats like HH:MM:S or HH:MM:SS, optional AM/PM)
+    Species = str_extract(PhotoDateTimeTag, "(?<=\\d{2}:\\d{2}:\\d{1,2}(?: [APM]{2})?).*") %>% 
+      str_trim() # Extract Species
+  )
+  
+# Clean species names in LL2022 ~ do this pre splitting as it makes splitting easier
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  mutate(Species = str_replace_all(Species, "\\d+_|LHS_|LS_|RS_|RHS_|_RHS|_LHS|Front\\s+end_|Back\\s+end_|Highlight_|Hghlight_|_Sub-adult|_Highlight|_White|White_|IR_|_IR|_Snare|Juvenile_|_Juvenile|2 indiv_|_2 indiv|_Wounded|Adult_|\\b\\d{1,2} [AP]M(?=\\w)|^_|\\s{2,}", ""), # Remove specific substrings from anywhere in the string | times eg."2 PM" or "11 AM" even when directly followed by a word | leading underscore | double spaces
+  )
+
+# Clean specific names pre-splitting
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  mutate(Species = case_when(
+    Species %in% c("African - Civettictis civetta_Civet", "Civet African - Civettictis civetta", "ivet African - Civettictis civetta", "Cvet African - Civettictis civetta") ~ "African Civet - Civettictis civetta",
+    Species %in% c("Jackal_Side-Striped - Canis adustus", "Jackal Side-Striped - Canis adustus") ~ "Side-Striped Jackal - Canis adustus",
+    Species %in% c("Hyaena_Spotted  - Crocuta crocuta", "Hyaena Spotted  - Crocuta crocuta", "Hyaena_Spotted - Crocuta crocuta") ~ "Spotted Hyaena - Crocuta crocuta",
+    Species == "Honeybadger - Mellivora capensis" ~ "Honey Badger - Mellivora capensis",
+    Species == "Wild cat African - Felis lybica" ~ "African Wildcat - Felis lybica",
+    Species %in% c("dult_Wild Dog - Lycaon pictus", "uvenile_Wild Dog - Lycaon pictus", "ild Dog - Lycaon pictus", "Wld Dog - Lycaon pictus", "Back end_Wild Dog - Lycaon pictus") ~ "Wild Dog - Lycaon pictus",
+    TRUE ~ Species
+  ))
+
+# Split the Species column for multiple species and pivot
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  separate_wider_delim(Species, delim = "_", names_sep = "_part", too_few = "align_start") %>%
+  pivot_longer(
+    cols = c(Species_part1, Species_part2, Species_part3, Species_part4),
+    names_to = "Species_Column",
+    values_to = "Species"
+  ) %>%
+  filter(!is.na(Species) & Species != "" & Species != "NA")  # Remove rows where Species was NA
+
+# Extra cleaning post splitting
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  mutate(Species = case_when(
+    Species %in% c("Hyaena Spotted- Crocuta crocuta", "Spotted- Crocuta crocuta") ~ "Spotted Hyaena - Crocuta crocuta",
+    Species == "Civet African - Civettictis civetta" ~ "African Civet - Civettictis civetta",
+    TRUE ~ Species
+  ))
+
+# Loc ID extraction - needs further cleaning
+ZBdataLL2022 <- ZBdataLL2022 %>% mutate(
+    LOC_ID = str_extract(Photo, "^.*?(?=R)"),              # Extract everything before 'R'
+    LOC_ID = gsub("[A-Za-z_]", "", LOC_ID)                 # Remove letters and underscores
+  )
+
+# Match date formats
+ZBdataLL2022$DATE <- as.Date(ZBdataLL2022$DATE, format = "%d/%m/%y")
+
+
+                       # Count number of days with detections of each species per site
+
+datasets <- c("ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022")
+species <- c("Lion - Panthera leo", "cheetah", "Leopard - Panthera pardus", "Spotted Hyaena - Crocuta crocuta", "Wild Dog - Lycaon pictus", "Caracal - Caracal caracal", "Serval - Leptailurus serval", "African Civet - Civettictis civetta", "Honey Badger - Mellivora capensis", "African Wildcat - Felis lybica",  "Side-Striped Jackal - Canis adustus")
+
+# Initialize an empty list to store the results
+result_countsLL <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    dataset <- get(ds)
+    filtered_data <- subset(dataset, Species == sp) # Filter rows where Species matches current species
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Count unique DATE × LOC_ID combinations
+    total_unique_combinations <- nrow(unique_combinations)
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create result name
+    result_countsLL[[result_name]] <- total_unique_combinations # Store result
+  }
+}
+```
+
+#### Rufunsa
+
+```{r}
+# R2020 cleaning
+ZBdataR2020 <- ZBdataR2020 %>% rename(Species = Species.1) # Rename column - no other species columns
+ZBdataR2020$Species[ZBdataR2020$Species == "Spotted Hyena - Crocuta crocuta"] <-"Spotted Hyaena - Crocuta crocuta" #Rename Species
+ZBdataR2020$DATE <- as.Date(ZBdataR2020$DATE, format = "%d/%m/%Y") # Match date format
+
+# R2021 cleaning
+ZBdataR2021 <- ZBdataR2021 %>% rename(Species = Species.1) # Other species column has no carnivores
+ZBdataR2021$Species[ZBdataR2021$Species == "Honeybadger - Mellivora capensis"] <-"Honey Badger - Mellivora capensis" #Rename species
+ZBdataR2021 <- ZBdataR2021 %>%
+  mutate(
+    DATETIME = as.POSIXct(DATETIME, format = "%d/%m/%Y", tz = "UTC"), 
+    DATE = as.Date(DATETIME) # Extract and create DATE column
+  )
+
+# R2022 cleaning
+ZBdataR2022 <- ZBdataR2022 %>% rename(Species = Species.1, Checkdate = DATE) # Rename columns
+ZBdataR2022 <- ZBdataR2022 %>%
+  mutate(
+    DATETIME = as.POSIXct(DATETIME, format = "%d/%m/%Y", tz = "UTC"),  
+    DATE = as.Date(DATETIME) # Extract and create DATE column
+  )
+ZBdataR2022 <- ZBdataR2022 %>%
+  mutate(Species = recode(Species,
+    "Honeybadger - Mellivora capensis" = "Honey Badger - Mellivora capensis",
+    "Civet African - Civettictis civetta" = "African Civet - Civettictis civetta",
+    "Jackal Side-Striped - Canis adustus" = "Side-Striped Jackal - Canis adustus",
+    "Hyaena Spotted  - Crocuta crocuta" = "Spotted Hyaena - Crocuta crocuta"
+  ))
+
+# Count number of days with detections of each species per site
+datasets <- c("ZBdataR2020", "ZBdataR2021", "ZBdataR2022")
+species <- c("Lion - Panthera leo", "Leopard - Panthera pardus", "Spotted Hyaena - Crocuta crocuta", "Wild Dog - Lycaon pictus", "Caracal - Caracal caracal", "Serval - Leptailurus serval", "African Civet - Civettictis civetta", "Honey Badger - Mellivora capensis", "African Wildcat - Felis lybica", "Side-Striped Jackal - Canis adustus")
+
+# Initialize an empty list to store the results
+result_countsR <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    dataset <- get(ds)
+    filtered_data <- subset(dataset, Species == sp)  # Filter rows where Species matches current species
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Count unique DATE × LOC_ID combinations
+    total_unique_combinations <- nrow(unique_combinations)
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create result nam
+    result_countsR[[result_name]] <- total_unique_combinations # Store result
+  }
+}
+```
+
+### Match species names across datasets and remove unneccsary species data
+
+```{r}
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022")
+
+# Create a named vector for recoding
+species_recode <- c(
+  "Lion - Panthera leo" = "Lion",
+  "lion" = "Lion",
+  "Leopard - Panthera pardus" = "Leopard",
+  "leopard" = "Leopard",
+  "cheetah" = "Cheetah",
+  "Spotted Hyaena - Crocuta crocuta" = "Spotted hyaena",
+  "spotted hyaena" = "Spotted hyaena",
+  "striped hyaena" = "Striped hyaena",
+  "Wild Dog - Lycaon pictus" = "African wild dog",
+  "wild dog" = "African wild dog",
+  "Caracal - Caracal caracal" = "Caracal",
+  "caracal" = "Caracal",
+  "Serval - Leptailurus serval" = "Serval",
+  "serval" = "Serval",
+  "African Civet - Civettictis civetta" = "African civet",
+  "civet" = "African civet",
+  "Honey Badger - Mellivora capensis" = "Honey badger",
+  "honey badger" = "Honey badger",
+  "African Wildcat - Felis lybica" = "African wildcat",
+  "wildcat" = "African wildcat",
+  "Side-Striped Jackal - Canis adustus" = "Side-striped jackal",
+  "s-s jackal" = "Side-striped jackal",
+  "bat-eared fox" = "Bat-eared fox",
+  "aardwolf" = "Aardwolf",
+  "b-b jackal" = "Black-backed jackal"
+)
+
+# Loop through all datasets and apply recoding
+for (ds in datasets) {
+  df <- get(ds)
+  df <- df %>%
+    mutate(Species = recode(Species, !!!species_recode)) %>% # Recode species
+    filter(Species %in% unname(species_recode))  # Keep only recoded species
+  assign(ds, df, envir = .GlobalEnv)
+}
+```
+
+### Save detection datasets
+
+```{r}
+# Save clean datasets
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022")
+
+# Define output directory
+output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+
+# Loop through all objects in the environment
+for (ds in datasets) {
+    file_name <- paste0(ds, "_clean.csv")
+    file_path <- file.path(output_dir, file_name)
+    write.csv(get(ds), file = file_path, row.names = FALSE)
+}
+```
+
+# Spatial covariate pre-processing
+
+## Import camera trap locations and combine
+
+```{r}
+datasets <- ls()  
+sp_list <- lapply(datasets[grepl("_spatial$", datasets)], get) # Select spatial dataframes
+camlocs <- do.call(rbind, sp_list) # Merge 
+camlocs_vec <- vect(camlocs, geom=c("X_AfricaAlbers", "Y_AfricaAlbers"), crs="+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25") # Convert to spatial file
+
+# View data to sense check
+mapview(camlocs_vec)
+```
+
+## Prepare landcover raster
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Landcover/")
+
+# List all CSV files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("lndc", i), rast(files[i]))
+}
+
+lndc_list <- sprc(lndc1, lndc2, lndc3, lndc4, lndc5, lndc6)
+lndc <- mosaic(lndc_list)
+plot(lndc)
+
+# Project to Africa Albers
+crs(lndc,describe=T) 
+
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_contries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Mask landcover by countries 
+```
+
+## Prepare human pop raster
+```{r}
+
+```
+
+## Prepare slope raster
+
+## Prepare evelvation raster
+
+## Prepare roughness raster
+
+## Create buffer for covariate extraction
+
+```{r}
+# Create a buffer of 1000 m around the camera trap locations
+cam_1000m_buffer <- buffer(camlocs_vec, width = 1000)
+mapview(cam_1000m_buffer)
+```
+
