@@ -16,6 +16,12 @@ library(stringr)
 library(sf)
 library(terra)
 library(rnaturalearth)
+library(ggplot2)
+library(tidyterra)
+library(mapview)
+library(viridis)
+library(spatstat)
+library(gstat)
 ```
 
 # Site pre-processing
@@ -583,24 +589,35 @@ for (ds in datasets) {
 
 # Spatial covariate pre-processing
 
-## Import camera trap locations and combine
+## Import camera trap locations and combine and create buffer
 
 ```{r}
-datasets <- ls()  
-sp_list <- lapply(datasets[grepl("_spatial$", datasets)], get) # Select spatial dataframes
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+datasets <- list.files(pattern = "\\_spatial.csv$")
+sp_list <- lapply(datasets, read.csv)  
 camlocs <- do.call(rbind, sp_list) # Merge 
 camlocs_vec <- vect(camlocs, geom=c("X_AfricaAlbers", "Y_AfricaAlbers"), crs="+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25") # Convert to spatial file
 
 # View data to sense check
 mapview(camlocs_vec)
+
+# Create a buffer of 1000 m around the camera trap locations
+cam_1000m_buffer <- buffer(camlocs_vec, width = 1000)
+mapview(cam_1000m_buffer)
+
+# Create a buffer of 10,000 m around the camera trap locations
+cam_10km_buffer <- buffer(camlocs_vec, width = 10000)
+mapview(cam_10km_buffer)
 ```
 
-## Prepare landcover raster
+##Landcover
+
+##### Prepare raster - not needed if reimporting saved masked raster
 
 ```{r}
 setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Landcover/")
 
-# List all CSV files in the working directory
+# List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
 
 # Loop through each file and import
@@ -608,36 +625,361 @@ for (i in seq_along(files)) {
   assign(paste0("lndc", i), rast(files[i]))
 }
 
-lndc_list <- sprc(lndc1, lndc2, lndc3, lndc4, lndc5, lndc6)
-lndc <- mosaic(lndc_list)
-plot(lndc)
-
-# Project to Africa Albers
-crs(lndc,describe=T) 
-
+# Crop and Mask by country
 # Download country outlines
 countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
-study_contries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
 
-# Mask landcover by countries 
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting landcover rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+lndc1_aa <- project(lndc1, africa_albers_crs, method = "near")
+lndc2_aa <- project(lndc2, africa_albers_crs, method = "near")
+lndc3_aa <- project(lndc3, africa_albers_crs, method = "near")
+lndc4_aa <- project(lndc4, africa_albers_crs, method = "near")
+lndc5_aa <- project(lndc5, africa_albers_crs, method = "near")
+lndc6_aa <- project(lndc6, africa_albers_crs, method = "near")
+lndc7_aa <- project(lndc7, africa_albers_crs, method = "near")
+
+# Merging landcover rasters
+lndc_aa <- merge(lndc1_aa, lndc2_aa, lndc3_aa, lndc4_aa, lndc5_aa, lndc6_aa, lndc7_aa)
+
+# Check they match
+plot(lndc_aa)
+plot(study_vect, add=T)
+
+# Mask
+lndc_mask <- mask(lndc_aa, study_vect)
+plot(lndc_mask)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(lndc_mask, "lndc_mask.tiff", overwrite=T)
 ```
 
-## Prepare human pop raster
+##### Caclulate proportions within buffer
+
+```{r}
+# Read raster back in
+lndc_mask <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/lndc_mask.tiff") 
+
+# Extract raster values inside each buffer polygon
+lndc_vals <- extract(lndc_mask, cam_1000m_buffer)
+
+# Create a lookup table to map the internal buffer ID (row number) to LOC_ID
+loc_id_map <- data.frame(
+  ID = 1:nrow(cam_1000m_buffer),  # This creates the internal IDs (1, 2, 3, ...)
+  LOC_ID = cam_1000m_buffer$LOC_ID # And maps them to your LOC_ID attribute
+)
+
+# Join the LOC_ID to your 'vals' data.frame
+lndc_vals<- merge(lndc_vals, loc_id_map, by = "ID")
+
+# Group landcover classess into open, closed and unknown
+lndc_vals_reclassified <- lndc_vals %>%
+  mutate(
+    landcover_class_grouped = case_when(
+      `35K_20240101-20241231` %in% c(4, 5, 8, 11) ~ "open",
+      `35K_20240101-20241231` %in% c(2, 3) ~ "closed",
+      TRUE ~ "unknown" # Catches all other values
+    )
+  )
+
+# Calculate proportions of differnt landcover classes within the buffer
+lndc_prop <- lndc_vals_reclassified %>%
+  group_by(LOC_ID, landcover_class_grouped) %>% # Group by each unique camera location and land cover class
+  summarise(count = n(), .groups = "drop_last") %>% # Count the number of pixels for each combination
+  group_by(LOC_ID) %>% # Now group only by camera location to calculate proportions within each buffer
+  mutate(proportion = count / sum(count)) %>% # Calculate the proportion of each land cover class for that LOC_ID
+  ungroup() %>%
+  # *** NEW STEP: Select only the columns needed for pivoting to ensure 'count' is dropped ***
+  dplyr::select(LOC_ID, landcover_class_grouped, proportion) %>%
+  pivot_wider( # Reshape the data: make land cover classes into columns, fill with proportions
+    names_from = landcover_class_grouped, # Values from this column become new column names
+    values_from = proportion,           # Proportions fill the new columns
+    values_fill = 0                     # Fill missing proportions with 0
+  )
+
+# Plot graph of closed proportion
+ggplot(lndc_prop, aes(x = closed)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") + # Adjust binwidth as needed
+  labs(
+    title = "Distribution of 'Closed' Landcover Proportion",
+    x = "Proportion of Closed Landcover",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+## Human population 
+
+##### Prepare raster - skip if reimporting merged raster in next step
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Worldpop/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("pop", i), rast(files[i]))
+}
+
+# Import country boundaries
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Mask by countries
+pop_mask <- mask(pop1, study_countries)
+pop_mask <- crop(pop_mask,study_countries)
+plot(pop_mask)
+
+# Re-projecting landcover rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+pop_aa <- project(pop_mask, africa_albers_crs, method = "near")
+
+# Negiobourhood smoothing
+pop_focal <- focal(pop_aa, w=101, fun=mean, na.rm=TRUE)
+plot(pop_focal)
+
+# Save reprojected merged raster
+writeRaster(pop_aa, "popraster.tiff", overwrite=T)
+```
+
+##### Calculate total within buffer
+
+```{r}
+# Read raster back in
+pop_ras <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/popraster.tiff") 
+
+# Extract total values
+popvals <- extract(pop_ras, cam_10km_buffer, "sum")
+
+# Create a lookup table to map the internal buffer ID (row number) to LOC_ID
+loc_id_map <- data.frame(
+  ID = 1:nrow(cam_10km_buffer),  # This creates the internal IDs (1, 2, 3, ...)
+  LOC_ID = cam_10km_buffer$LOC_ID # And maps them to your LOC_ID attribute
+)
+
+# Join the LOC_ID to your 'vals' data.frame
+popvals<- merge(popvals, loc_id_map, by = "ID")
+
+# Rename 2nd column
+names(popvals)[2] <- "hum_pop"
+
+# Logtransform
+popvals$log_hum_pop <- log1p(popvals$hum_pop)
+
+# Plot human population average
+ggplot(popvals, aes(x = log_hum_pop)) +
+  geom_histogram(fill = "dodgerblue", color = "white") +
+  labs(
+    x = "Log Transformed Total Population",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+## Slope  average within radius
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Slope/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("slope", i), rast(files[i]))
+}
+
+```
+
+## Roughness raster - average within radius
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Roughness/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("rough", i), rast(files[i]))
+}
+```
+
+##Soil moisture
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/soil moisture/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("moist", i), rast(files[i]))
+}
+
+# Crop and Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting landcover rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+moist1_aa <- project(moist1, africa_albers_crs, method = "near")
+moist2_aa <- project(moist2, africa_albers_crs, method = "near")
+moist3_aa <- project(moist3, africa_albers_crs, method = "near")
+moist4_aa <- project(moist4, africa_albers_crs, method = "near")
+moist5_aa <- project(moist5, africa_albers_crs, method = "near")
+moist6_aa <- project(moist6, africa_albers_crs, method = "near")
+
+# Merging landcover rasters
+moist_aa <- merge(moist1_aa, moist2_aa, moist3_aa, moist4_aa, moist5_aa, moist6_aa)
+
+# Check they match
+plot(moist_aa)
+plot(study_vect, add=T)
+
+# Mask
+moist_mask <- mask(moist_aa, study_vect)
+plot(moist_mask)
+plot(study_vect,add=T)
+
+writeRaster(moist_mask, "moist_mask.tiff", overwrite=T)
+```
+
+### Calculate average within radius
+
+```{r}
+# Read raster back in
+moist_ras <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/moist_mask.tiff") 
+
+# Extract average values
+moistvals <- extract(moist_ras, cam_1000m_buffer, "mean")
+
+# Create a lookup table to map the internal buffer ID (row number) to LOC_ID
+loc_id_map <- data.frame(
+  ID = 1:nrow(cam_1000m_buffer),  # This creates the internal IDs (1, 2, 3, ...)
+  LOC_ID = cam_1000m_buffer$LOC_ID # And maps them to your LOC_ID attribute
+)
+
+# Join the LOC_ID to your 'vals' data.frame
+moistvals<- merge(moistvals, loc_id_map, by = "ID")
+
+# Rename 2nd column
+names(moistvals)[2] <- "soil_moist"
+
+# Logtransform
+moistvals$log_soil_moist <- log1p(moistvals$soil_moist)
+
+# Plot human population average
+ggplot(moistvals, aes(x = log_soil_moist)) +
+  geom_histogram(fill = "dodgerblue", color = "white") +
+  labs(
+    x = "Log Transformed Soil Moisture",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+## Temperature raster - average within radius
+
 ```{r}
 
 ```
 
-## Prepare slope raster
-
-## Prepare evelvation raster
-
-## Prepare roughness raster
-
-## Create buffer for covariate extraction
+## Temp seasonality raster - average within radius
 
 ```{r}
-# Create a buffer of 1000 m around the camera trap locations
-cam_1000m_buffer <- buffer(camlocs_vec, width = 1000)
-mapview(cam_1000m_buffer)
+
+```
+
+### Land temp raster - average within radius
+
+```{r}
+
+```
+
+### Rainfall raster - average within radius
+
+```{r}
+
+```
+
+### Rain seasonality raster - average within radius
+
+```{r}
+
+```
+
+### Distance to water raster - at exact point calculated from landcover layer
+
+```{r}
+
+```
+
+### Distance to 1-4 WDPA raster - at exact point
+
+```{r}
+
+```
+
+### Area protected classification - at exact point
+
+```{r}
+
+```
+
+## Extract covariates for exact point extraction
+
+```{r}
+# Stack rasters
+stack <- c(lndc_mask) # add PA classification, distance to 1-4 WDPA, distance to water
+
+# Extract to camera stations
+values <- terra::extract(stack, camlocs_vec, df=T, bind=T)
+head(values)
+names(values)[2] <- "land_cover"
+```
+
+## Merge with raidus layers
+
+```{r}
+values <- merge(values, lndc_prop, by = "LOC_ID") 
+values <- merge(values, popvals, by = "LOC_ID") 
+values <- merge(values, moistvals, by = "LOC_ID") # add slope, roughness, rainfall, rainfall seasonality, temperature, temperature seasonality, land temperature
+head(values)
+names(values)[3] <- "closed_prop"
+names(values)[4] <- "open_prop"
+names(values)[5] <- "unknown_prop"
+head(values)
+```
+
+## Create survey location covariate
+
+## Write csv
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+write.csv(values, "spatial_covariates.csv", row.names=F)
 ```
 
