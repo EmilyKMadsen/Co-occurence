@@ -21,7 +21,7 @@ library(spOccupancy)
 
 ```{r}
 #read data
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
 
 # List all CSV files in the working directory
 files <- list.files(pattern = "\\.csv$")
@@ -292,7 +292,7 @@ fieldseason_numeric_matrix <- as.data.frame(numeric_matrix)
 
 ```{r}
 # Read data
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
 spatial_covs <- read.csv("spatial_covariates.csv")
 
 # Recode to bigger groups 
@@ -364,6 +364,21 @@ occ_data <- list(
 # Run multivariate models
 
 ```{r}
+# Null model
+null_model <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ 1,
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 400,
+                       batch.length = 400,
+                       n.burn = 5000,
+                       n.thin = 5,
+                       n.chains = 3)
 # Control model
 det_model <- sfMsPGOcc(occ.formula = ~ scale(log_soil_moist),
                        det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
@@ -453,6 +468,10 @@ waicOcc(hab_model, hum_model)
 summary(occ_model, level = 'both')
 ```
 
+
+
+
+
 # Trouble shooting
 
 ## Detection history issue - run per site to find where missing species data is
@@ -513,5 +532,19 @@ for (i in seq_along(cap_names)) {
 # Count detections
 detection_totals <- apply(y_array, 1, function(x) sum(x, na.rm = TRUE))
 detection_totals
+```
+
+## Error with some sites having empty detection histories
+
+```{r}
+d <- dim(y_array)
+for (i in seq_along(d)) {
+  cnt <- apply(y_array, i, function(slice) sum(!is.na(slice)))
+  cat("\n--- Dimension", i, "(length =", d[i], ") ---\n")
+  cat("slices with ANY non-NA:", sum(cnt > 0), "of", length(cnt), "\n")
+  cat("first 20 counts:"); print(head(cnt, 20))
+}
+
+
 ```
 

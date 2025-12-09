@@ -30,7 +30,7 @@ library(gstat)
                                                 
 ```{r}
 # read Ruaha-Rungwa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTtrap_layouts")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTtrap_layouts")
 
 RRlayoutMIO2018 <- read.csv("TZ_RR_MIO-2018_CT trap layout_midday.csv", header = FALSE)
 RRlayoutRNP2018 <- read.csv("TZ_RR_RNP-2018_CT trap layout_midday.csv", header = FALSE)
@@ -38,7 +38,7 @@ RRlayoutWMA2018 <- read.csv("TZ_RR_WMA-2018_CT trap layout_midday.csv", header =
 RRlayoutRGI2019 <- read.csv("TZ_RR_RGI-2019_CT trap layout_midday.csv", header = FALSE)
 
 # read Selous-Nyerere data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTtrap_layouts")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTtrap_layouts")
 
 SNlayoutNMTL2020 <- read.csv("TZ_SN_NMTL-2020_CT trap layout_midday.csv", header = FALSE)
 SNlayoutSKPE2021 <- read.csv("TZ_SN_SKPE-2021_CT trap layout_midday.csv", header = FALSE)
@@ -49,18 +49,22 @@ SNlayoutNKLC2022 <- read.csv("TZ_SN_NKLC-2022_CT trap layout_midday.csv", header
 SNlayoutNMSK2022 <- read.csv("TZ_SN_NMSK-2022_CT trap layout_midday.csv", header = FALSE)
 
 # read Lower Luangwa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTtrap_layouts")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTtrap_layouts")
 
 ZBlayoutLL2020 <- read.csv("ZB-LU-2020_CT layout midday.csv", header = TRUE)
 ZBlayoutLL2021 <- read.csv("ZB-LU-2021_CT layout midday.csv", header = TRUE)
 ZBlayoutLL2022 <- read.csv("ZB-LU-2022_CT layout midday.csv", header = TRUE)
 
 # read Rufunsa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTtrap_layouts")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTtrap_layouts")
 
 ZBlayoutR2020 <- read.csv("ZB-RUF-2020_CT layout midday.csv", header = TRUE)
 ZBlayoutR2021 <- read.csv("ZB-RUF-2021_CT layout midday.csv", header = TRUE)
 ZBlayoutR2022 <- read.csv("ZB-RUF-2022_CT layout midday.csv", header = TRUE)
+
+# read Laikipia data
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Laikipia")
+LKlayout2025 <- read.csv("KLKE_CT trap layout_midday.csv", header = TRUE)
 ```
 
 ## Create spatial dataframes
@@ -131,7 +135,6 @@ for (ds in datasets) {
                          Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
   assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
 }
-
 ```
 
 ### Zambia
@@ -194,13 +197,53 @@ for (ds in datasets) {
 }
 ```
 
+### Kenya
+
+```{r}
+datasets <- c("LKlayout2025") 
+
+# Loop through sites to extract spatial data 
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[, 1:3] # Keep only the first 3 columns LOC_ID, X, Y
+  obj <- obj[-c(1), ] # Remove the first row - it is blank
+  colnames(obj) <- as.character(obj[1, ]) # Set new row 1 as column names
+  obj <- obj[-1, ] # Remove the new first row which repeats the column names
+  new_name <- paste0(ds, "_spatial") # Save to a new object with "_spatial" suffix
+  assign(new_name, obj, envir = .GlobalEnv)
+}
+
+# List new datasets
+datasets <- c("LKlayout2025_spatial") 
+
+# Project into Africa Albers
+# Define Africa Albers Equal Area CRS
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+
+# Define UTM Zone 37N CRS (EPSG:32637)  <-- FIXED HERE
+utm_37n_crs <- st_crs(32637)
+
+# Loop through each dataset to project to Africa Albers
+for (ds in datasets) {
+  df <- get(ds)
+  df_sf <- st_as_sf(df, coords = c("X_UTM37N", "Y_UTM37N"), crs = utm_37n_crs) # Convert to sf object with UTM coordinates
+  df_aea <- st_transform(df_sf, crs = africa_albers_crs) # Transform to Africa Albers
+  coords_aea <- st_coordinates(df_aea) # Extract numeric coordinates
+  df_final <- data.frame(LOC_ID = df$LOC_ID,
+                         X_AfricaAlbers = coords_aea[, 1],
+                         Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
+  assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
+}
+```
+
+
 ### Save spatial datasets to drive
 
 ```{r}
-datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial")
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial")
 
 # Define output directory
-output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
 
 # Loop through all datasets
 for (ds in datasets) {
@@ -220,7 +263,7 @@ datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayout
 # Loop through to remove location data and end day date
 for (ds in datasets) {
   obj <- get(ds)
-  obj <- obj[-c(2,3), -c(2, 3)] # Remove row 2 and columns 2 & 3
+  obj <- obj[-c(2,3), -c(2, 3)] # Remove row 2 & 3 and columns 2 & 3
   obj[1, ] <- sub(" .*", "", obj[1, ]) # Keep only date part in row 1
   colnames(obj) <- as.character(obj[1, ]) # Set row 1 as column names
   obj <- obj[-1, ] # Remove the new first row
@@ -231,13 +274,12 @@ for (ds in datasets) {
 ### Zambia
 
 ```{r}
-# NOTE: Relies on cleaned dataset from spatial layer creation
 datasets <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
 
 # Loop through and modify each dataset to remove location data and match date format to Tanzania: DD.MM.YYYY -> DD/MM/YYYY and remove name of first column LOC_ID
 for (ds in datasets) {
   df <- get(ds)
-  df <- df[-c(2,3), -c(2, 3)] # Remove row 2 and columns 2 & 3
+  df <- df[-c(2,3), -c(2, 3)] # Remove row 2 & 3 and columns 2 & 3
   new_names <- colnames(df) 
   date_cols <- grepl("^\\d{2}\\.\\d{2}\\.\\d{4}$" , new_names)# Identify which column names match the date pattern
   new_names[date_cols] <- gsub("\\.", "/", new_names[date_cols]) # Replace dots with slashes in those column names
@@ -249,13 +291,27 @@ for (ds in datasets) {
 #ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
 ```
 
+### Kenya
+```{r}
+datasets <- c("LKlayout2025")
+
+# Loop through to remove location data and end day date
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[-c(1,2), -c(2, 3, 4, 5)]  # Remove row 1 & 2 and columns 2,3,4,5
+  colnames(obj)[1] <- ""  # Remove the column name of the first column
+  colnames(obj) <- gsub("\\.", "/", sub("^X(\\d{2})\\.(\\d{2})\\.(\\d{4}).*", "\\1.\\2.\\3", colnames(obj)))  # Convert XDD.MM.YYYY.* to DD/MM/YYYY
+  assign(ds, obj, envir = .GlobalEnv)  # Assign cleaned dataset back to the environment
+}
+```
+
 ### Save clean layout datasets
 
 ```{r}
-datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022","ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
+datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022","ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022", "LKlayout2025")
 
 # Define output directory
-output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
 
 # Loop through all objects in the environment
 for (ds in datasets) {
@@ -270,7 +326,7 @@ for (ds in datasets) {
 ## Import raw detection data files
 ```{r}
 # read Ruaha-Rungwa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTcapture_data")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Ruaha-Rungwa_CTcapture_data")
 
 RRdataMIO2018 <- read.csv("TZ_RR_MIO-2018_CT captures_202408.csv", header = FALSE)
 RRdataRNP2018 <- read.csv("TZ_RR_RNP-2018_CT captures_202408.csv", header = FALSE)
@@ -278,7 +334,7 @@ RRdataWMA2018 <- read.csv("TZ_RR_WMA-2018_CT captures_202408.csv", header = FALS
 RRdataRGI2019 <- read.csv("TZ_RR_RGI-2019_CT captures_202408.csv", header = FALSE)
 
 # read Selous-Nyerere data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTcapture_data")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Selous-Nyere_CTcapture_data")
 
 SNdataNMTL2020 <- read.csv("TZ_SN_NMTL-2020_CT captures_202405.csv", header = FALSE)
 SNdataSKPE2021 <- read.csv("TZ_SN_SKPE-2021_CT captures_202405.csv", header = FALSE)
@@ -289,18 +345,23 @@ SNdataNKLC2022 <- read.csv("TZ_SN_NKLC-2022_CT captures_202405.csv", header = FA
 SNdataNMSK2022 <- read.csv("TZ_SN_NMSK-2022_CT captures_202405.csv", header = FALSE)
 
 # read Lower Luangwa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTcapture_data")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Lower_Luangwa_CTcapture_data")
 
 ZBdataLL2020 <- read.csv("All_Species_2020.csv", header = TRUE)
 ZBdataLL2021 <- read.csv("All_Species_2021.csv", header = TRUE)
 ZBdataLL2022 <- read.csv("LLZ_BM_CT_LowerLuangwa_2022.csv", header = TRUE)
 
 # read Rufunsa data
-setwd("~/Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTcapture_data")
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Rufunsa_CTcapture_data")
 
 ZBdataR2020 <- read.csv("All_Species_2020.csv", header = TRUE)
 ZBdataR2021 <- read.csv("All_Species_2021.csv", header = TRUE)
 ZBdataR2022 <- read.csv("All_Species_2022.csv", header = TRUE)
+
+# read Laikipia data
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Laikipia")
+
+LKdata2025 <- read.csv("Camera_trap_uncleaned2.csv", header = TRUE)
 ```
 
 ## Prepare detection data as lists and count detections per site x day x species
@@ -526,10 +587,38 @@ for (sp in species) {
 }
 ```
 
+### Kenya
+
+```{r}
+names(LKdata2025)[names(LKdata2025) == "Image.ID"] <- "PHOTO"  # Rename Image.ID to PHOTO
+
+LKdata2025 <- cbind(LKdata2025[1], GRID = "LKE", LKdata2025[-1])  # Insert new column 2 called GRID with value LKE
+
+names(LKdata2025)[names(LKdata2025) == "Site.Name"] <- "LOC_ID"  # Rename Site.Name to LOC_ID
+
+ts_col <- if ("Timestamp" %in% names(LKdata2025)) "Timestamp" else if ("Timestamp" %in% names(LKdata2025)) "Timestamp" else NA  # Find timestamp column
+
+ts_vals <- gsub("T", " ", as.character(LKdata2025[[ts_col]]))  # Replace T with space for splitting
+raw_date <- sub(" .*", "", ts_vals)  # Extract DATE part (DD/MM/YYYY)
+LKdata2025$DATE <- format(as.Date(raw_date, format = "%d/%m/%Y"), "%Y-%m-%d")  # Convert to YYYY-MM-DD
+
+LKdata2025$TIME <- sub("^[^ ]* ?", "", ts_vals)  # Extract TIME from timestamp
+
+names(LKdata2025)[names(LKdata2025) == "Timestamp"] <- "DATETIME"  # Rename timestamp to DATETIME
+
+LKdata2025$value <- 1  # Add new column 'value' at the end with all values = 1
+
+LKdata2025 <- LKdata2025[ , !names(LKdata2025) %in% "Camera.Name" ]  # Remove column Camera.Name
+
+LKdata2025 <- LKdata2025 %>% # split rows with two species
+  separate_rows(Species, sep = "\\|") %>%
+  mutate(Species = str_trim(Species))
+```
+
 ### Match species names across datasets and remove unneccsary species data
 
 ```{r}
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025")
 
 # Create a named vector for recoding
 species_recode <- c(
@@ -540,8 +629,11 @@ species_recode <- c(
   "cheetah" = "Cheetah",
   "Spotted Hyaena - Crocuta crocuta" = "Spotted hyaena",
   "spotted hyaena" = "Spotted hyaena",
+  "Spotted hyena" = "Spotted hyaena",
   "striped hyaena" = "Striped hyaena",
+  "Striped hyena" = "Striped hyaena",
   "Wild Dog - Lycaon pictus" = "African wild dog",
+  "Wild Dog" = "African wild dog",
   "wild dog" = "African wild dog",
   "Caracal - Caracal caracal" = "Caracal",
   "caracal" = "Caracal",
@@ -553,9 +645,11 @@ species_recode <- c(
   "honey badger" = "Honey badger",
   "African Wildcat - Felis lybica" = "African wildcat",
   "wildcat" = "African wildcat",
+  "Wildcat" = "African wildcat",
   "Side-Striped Jackal - Canis adustus" = "Side-striped jackal",
   "s-s jackal" = "Side-striped jackal",
   "bat-eared fox" = "Bat-eared fox",
+  "Bat-eared Fox" = "Bat-eared fox",
   "aardwolf" = "Aardwolf",
   "b-b jackal" = "Black-backed jackal"
 )
@@ -574,10 +668,10 @@ for (ds in datasets) {
 
 ```{r}
 # Save clean datasets
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025")
 
 # Define output directory
-output_dir <- "C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
+output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
 
 # Loop through all objects in the environment
 for (ds in datasets) {
@@ -592,7 +686,7 @@ for (ds in datasets) {
 ## Import camera trap locations and combine and create buffer
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
 datasets <- list.files(pattern = "\\_spatial.csv$")
 sp_list <- lapply(datasets, read.csv)  
 camlocs <- do.call(rbind, sp_list) # Merge 
@@ -610,12 +704,12 @@ cam_10km_buffer <- buffer(camlocs_vec, width = 10000)
 mapview(cam_10km_buffer)
 ```
 
-##Landcover
+## Landcover
 
 ##### Prepare raster - not needed if reimporting saved masked raster
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Landcover/")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Landcover/")
 
 # List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
@@ -665,7 +759,7 @@ writeRaster(lndc_mask, "lndc_mask.tiff", overwrite=T)
 
 ```{r}
 # Read raster back in
-lndc_mask <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/lndc_mask.tiff") 
+lndc_mask <- rast("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/lndc_mask.tiff") 
 
 # Extract raster values inside each buffer polygon
 lndc_vals <- extract(lndc_mask, cam_1000m_buffer)
@@ -755,7 +849,7 @@ writeRaster(pop_aa, "popraster.tiff", overwrite=T)
 
 ```{r}
 # Read raster back in
-pop_ras <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/popraster.tiff") 
+pop_ras <- rast("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/popraster.tiff") 
 
 # Extract total values
 popvals <- extract(pop_ras, cam_10km_buffer, "sum")
@@ -772,7 +866,7 @@ popvals<- merge(popvals, loc_id_map, by = "ID")
 # Rename 2nd column
 names(popvals)[2] <- "hum_pop"
 
-# Logtransform
+# Log transform
 popvals$log_hum_pop <- log1p(popvals$hum_pop)
 
 # Plot human population average
@@ -785,7 +879,7 @@ ggplot(popvals, aes(x = log_hum_pop)) +
   theme_minimal()
 ```
 
-## Slope  average within radius
+## Slope average within radius
 
 ### Prepare raster
 
@@ -807,7 +901,7 @@ for (i in seq_along(files)) {
 ### Prepare raster
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Roughness/")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Roughness/")
 
 # List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
@@ -818,9 +912,9 @@ for (i in seq_along(files)) {
 }
 ```
 
-##Soil moisture
+## Soil moisture
 
-### Prepare raster
+### Prepare raster ~ skip if reimporting
 
 ```{r}
 setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/soil moisture/")
@@ -871,7 +965,7 @@ writeRaster(moist_mask, "moist_mask.tiff", overwrite=T)
 
 ```{r}
 # Read raster back in
-moist_ras <- rast("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/moist_mask.tiff") 
+moist_ras <- rast("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/moist_mask.tiff") 
 
 # Extract average values
 moistvals <- extract(moist_ras, cam_1000m_buffer, "mean")
@@ -888,7 +982,7 @@ moistvals<- merge(moistvals, loc_id_map, by = "ID")
 # Rename 2nd column
 names(moistvals)[2] <- "soil_moist"
 
-# Logtransform
+# Log transform
 moistvals$log_soil_moist <- log1p(moistvals$soil_moist)
 
 # Plot human population average
@@ -979,7 +1073,7 @@ head(values)
 ## Write csv
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
 write.csv(values, "spatial_covariates.csv", row.names=F)
 ```
 
