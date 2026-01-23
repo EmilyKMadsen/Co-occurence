@@ -26,7 +26,7 @@ setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-
 # List all CSV files in the working directory
 files <- list.files(pattern = "\\.csv$")
 
-# Loop through each file and assign it based on its naming convention: -cap for capture data, -lay for station operation datess, -sp for station location
+# Loop through each file and assign it based on its naming convention: -cap for capture data, -lay for station operation dates, -sp for station location
 for (file in files) {
   # Extract base name without file extension and remove '_clean' part
   base <- tools::file_path_sans_ext(file)
@@ -43,6 +43,9 @@ for (file in files) {
     assign(paste0(ds, "lay"), read.csv(file, header = TRUE, check.names = FALSE))
   }
 }
+
+## TEMPORARY remove OJ files
+rm(OJ2022cap, OJ2022sp)
 ```
 
 # Data preparation
@@ -144,7 +147,7 @@ species_list <- sort(unique(unlist(lapply(cap_names, function(name) {
   unique(get(name)$Species)})))) #full list of species
 
 # Remove low detection species - edit as necessary
-species_list <- setdiff(species_list, "Cheetah")
+#species_list <- setdiff(species_list, "Cheetah")
 
 # Create empty array with lists
 y_array <- array(NA, dim = c(length(species_list), length(site_list), length(week_list)),
@@ -358,8 +361,6 @@ occ_data <- list(
 ## Select between temperature covariates
 
 ## Select between rainfall covariates
-
-## Select between soil covariates
 
 # Run multivariate models
 

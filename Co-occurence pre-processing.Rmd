@@ -73,6 +73,7 @@ LKlayout2025 <- read.csv("KLKE_CT trap layout_midday.csv", header = TRUE)
 # read Maasai Mara data
 setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/BHP")
 MMlayout2018 <- read.csv("all_sites_effort_occupancy_v2_2018.csv", header = TRUE)
+MMspatial2018 <- read.csv("All.csv", header = TRUE)
 
 # read Oljogi data
 setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Ol Jogi")
@@ -225,10 +226,9 @@ for (ds in datasets) {
 
 ### Kenya 
 
-####Laikipia
+#### Laikipia
 
 ```{r}
-# Laikipia
 datasets <- c("LKlayout2025") 
 
 # Loop through sites to extract spatial data 
@@ -268,10 +268,6 @@ for (ds in datasets) {
 #### Maasai Mara
 
 ```{r}
-# Maasai Mara ~ format very different so going to import another dataset and use that
-setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/BHP")
-MMspatial2018 <- read.csv("All.csv", header = TRUE)
-
 datasets <- c("MMspatial2018") 
 
 # Loop through sites to extract spatial data 
@@ -282,8 +278,10 @@ for (ds in datasets) {
   assign(new_name, obj, envir = .GlobalEnv)
 }
 
+MMlayout2018_spatial <- MMspatial2018_spatial
+
 # List new datasets
-datasets <- c("MMspatial2018_spatial") 
+datasets <- c("MMlayout2018_spatial") 
 
 # Project into Africa Albers
 africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
@@ -342,7 +340,7 @@ OJlayout2022_spatial$Latitude  <- NULL
 ### Save spatial datasets to drive
 
 ```{r}
-datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial", "MMspatial2018_spatial", "OJlayout2022_spatial")
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial", "MMlayout2018_spatial", "OJlayout2022_spatial")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
@@ -395,15 +393,28 @@ ZBlayoutR2022 <- ZBlayoutR2022 %>%
 # Loop through and modify each dataset to remove location data and match date format to Tanzania: DD.MM.YYYY -> DD/MM/YYYY and remove name of first column LOC_ID
 for (ds in datasets) {
   df <- get(ds)
-  df <- df[-c(2,3), -c(2, 3, 4)] # Remove row 2 & 3 and columns 2 & 3
-  new_names <- colnames(df) 
-  date_cols <- grepl("^\\d{2}\\.\\d{2}\\.\\d{4}$" , new_names)# Identify which column names match the date pattern
-  new_names[date_cols] <- gsub("\\.", "/", new_names[date_cols]) # Replace dots with slashes in those column names
-  colnames(df) <- new_names  # Apply updated names and overwrite original dataset
-  names(df)[1] <- ""  # Remove name of first column
+  colnames(df) <- sub("^X", "", colnames(df)) # REMOVE leading X from column names 
+  df <- df[-c(2, 3, 4)]  # Remove row 2 & 3 and columns 2, 3, 4
+  new_names <- colnames(df)
+  date_cols <- grepl("^\\d{2}\\.\\d{2}\\.\\d{4}$", new_names) # Identify date-like column names (DD.MM.YYYY)
+  new_names[date_cols] <- gsub("\\.", "/", new_names[date_cols]) # Replace dots with slashes in date columns
+  colnames(df) <- new_names
+  names(df)[1] <- ""   # Remove name of first column
   assign(ds, df, envir = .GlobalEnv)
 }
 
+# Collapse cameras into sites
+for (ds in datasets) {
+  x <- get(ds)
+  x[is.na(x)] <- 0
+  x <- cbind(
+    x[!duplicated(x[, 1]), 1],
+    rowsum(x[, -1], x[, 1])
+  )
+  rownames(x) <- NULL
+  colnames(x)[1] <- ""
+  assign(ds, x, envir = .GlobalEnv)
+}
 
 #ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
 ```
