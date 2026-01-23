@@ -355,7 +355,7 @@ for (ds in datasets) {
 }
 ```
 
-## Prepare layout files for detection hitories  
+## Prepare layout files for detection histories  
 
 ### Tanzania
 
@@ -378,10 +378,24 @@ for (ds in datasets) {
 ```{r}
 datasets <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
 
+# Append year onto loc-IDs due to location inconsistencies
+ZBlayoutLL2020 <- ZBlayoutLL2020 %>%
+  mutate(Grid.cell = paste0(Grid.cell, "-2020"))
+ZBlayoutLL2021 <- ZBlayoutLL2021 %>%
+  mutate(Grid.cell = paste0(Grid.cell, "-2021"))
+ZBlayoutLL2022 <- ZBlayoutLL2022 %>%
+  mutate(Grid.cell = paste0(Grid.cell, "-2022"))
+ZBlayoutR2020 <- ZBlayoutR2020 %>%
+  mutate(Grid.cell = paste0(Grid.cell, "-2020"))
+ZBlayoutR2021 <- ZBlayoutR2021 %>%
+  mutate(Si1e.ID = paste0(Si1e.ID, "-2021"))
+ZBlayoutR2022 <- ZBlayoutR2022 %>%
+  mutate(Grid.Cell.ID = paste0(Grid.Cell.ID, "-2022"))
+
 # Loop through and modify each dataset to remove location data and match date format to Tanzania: DD.MM.YYYY -> DD/MM/YYYY and remove name of first column LOC_ID
 for (ds in datasets) {
   df <- get(ds)
-  df <- df[-c(2,3), -c(2, 3)] # Remove row 2 & 3 and columns 2 & 3
+  df <- df[-c(2,3), -c(2, 3, 4)] # Remove row 2 & 3 and columns 2 & 3
   new_names <- colnames(df) 
   date_cols <- grepl("^\\d{2}\\.\\d{2}\\.\\d{4}$" , new_names)# Identify which column names match the date pattern
   new_names[date_cols] <- gsub("\\.", "/", new_names[date_cols]) # Replace dots with slashes in those column names
@@ -389,6 +403,7 @@ for (ds in datasets) {
   names(df)[1] <- ""  # Remove name of first column
   assign(ds, df, envir = .GlobalEnv)
 }
+
 
 #ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
 ```
@@ -425,10 +440,10 @@ MMlayout2018[is.na(MMlayout2018)] <- 0 # change all NAs to 0
 MMlayout2018[] <- lapply(MMlayout2018, function(x) {if (is.character(x)) sub("^\\s+1$", "1", x) else x}) # clean spaces
 ```
 
-#### Ol Jogi
+#### Ol Jogi - TO ADD
 
 ```{r}
-datasets <- c("OJlayout2022")
+datasets <- c("")
 
 
 ```
@@ -497,6 +512,10 @@ setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/BHP")
 MMdata2018 <- read.csv("ML2018.csv", header = TRUE)
 MMdatahyaena <- read.csv("hyena_aardwolf_2018_ML.csv", header = TRUE)
 MMhyaena <- read.csv("Hyena-export.csv", header = TRUE)
+
+# read Ol Jogi data
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Ol Jogi")
+OJdata2022 <- read.csv("Oljogi.csv", header = TRUE)
 ```
 
 ## Prepare detection data as lists and count detections per site x day x species
@@ -517,7 +536,7 @@ for (ds in datasets) {
   assign(ds, df) # Assign the cleaned data back to the original dataset name
 }
 
-# Count species detections per species per day per site
+# Count detections per species per day per site
 species <- c("lion", "cheetah", "leopard", "spotted hyaena", "striped hyaena", 
              "wild dog", "caracal", "serval", "civet", "honey badger", 
              "wildcat", "bat-eared fox", "aardwolf", "b-b jackal", "s-s jackal")
@@ -543,7 +562,7 @@ unique_combinations <- unique(lion_data[, c("DATE", "LOC_ID")]) # Get the unique
 total_unique_combinations <- nrow(unique_combinations) # Count the total number of unique combinations
 total_unique_combinations # Print the result
 
-# Turn into list of detentions rather than a matrix
+# Turn into list of detections rather than a matrix
 
 # Loop through and subset each dataset to remove unwanted species and pivot into one row per detection
 for (ds in datasets) {
@@ -563,7 +582,7 @@ for (ds in datasets) {
   assign(ds, df, envir = .GlobalEnv)
 }
 ```
-
+ 
 ### Zambia
 
 #### Lower Luangwa  
@@ -668,6 +687,14 @@ for (sp in species) {
     result_countsLL[[result_name]] <- total_unique_combinations # Store result
   }
 }
+
+# Append year onto loc-IDs due to location inconsistencies
+ZBdataLL2020 <- ZBdataLL2020 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
+ZBdataLL2021 <- ZBdataLL2021 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
+ZBdataLL2022 <- ZBdataLL2022 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
 ```
 
 #### Rufunsa
@@ -720,6 +747,14 @@ for (sp in species) {
     result_countsR[[result_name]] <- total_unique_combinations # Store result
   }
 }
+
+# Add year to location names due to inconsistencies
+ZBdataR2020 <- ZBdataR2020 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
+ZBdataR2021 <- ZBdataR2021 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
+ZBdataR2022 <- ZBdataR2022 %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
 ```
 
 ### Kenya 
@@ -750,6 +785,25 @@ LKdata2025 <- LKdata2025[ , !names(LKdata2025) %in% "Camera.Name" ]  # Remove co
 LKdata2025 <- LKdata2025 %>% # split rows with two species
   separate_rows(Species, sep = "\\|") %>%
   mutate(Species = str_trim(Species))
+
+# Count number of days with detections of each species per site
+datasets <- c("LKdata2025")
+species <- c("Aardwolf", "Bat-eared Fox", "Black-backed jackal", "Caracal", "Cheetah", "Honey badger", "Leopard", "Lion", "Serval", "Side-striped jackal", "Spotted hyena", "Striped hyena", "Wild Dog", "Wildcat")
+
+# Initialize an empty list to store the results
+result_countsLK <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    dataset <- get(ds)
+    filtered_data <- subset(dataset, Species == sp)  # Filter rows where Species matches current species
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Count unique DATE × LOC_ID combinations
+    total_unique_combinations <- nrow(unique_combinations)
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create result nam
+    result_countsLK[[result_name]] <- total_unique_combinations # Store result
+  }
+}
 ```
 
 #### Maasai Mara
@@ -796,16 +850,73 @@ MM_joined$TIME <- sub(".* ", "", MM_joined$DATETIME)  # extract time after the s
 MM_joined <- MM_joined[, c("PHOTO", "GRID", "LOC_ID", "Species", "DATETIME", "DATE", "TIME", "value")] # reorder
 
 # join to main
-MM_data <- bind_rows(MMdata2018, MM_joined)
+MMdata2018 <- bind_rows(MMdata2018, MM_joined)
 
 # fix jackal now to avoid later complications
-MM_data$Species[MM_data$Species == "jackal"] <- "Black-backed jackal"
+MMdata2018$Species[MMdata2018$Species == "jackal"] <- "Black-backed jackal"
+
+# Count number of days with detections of each species per site
+datasets <- c("MMdata2018")
+species <- c("aardwolf", "bateared_fox", "Black-backed jackal", "cheetah", "hyena_spotted", "hyena_striped", "leopard", "lion", "serval")
+
+# Initialize an empty list to store the results
+result_countsMM <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    dataset <- get(ds)
+    filtered_data <- subset(dataset, Species == sp)  # Filter rows where Species matches current species
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Count unique DATE × LOC_ID combinations
+    total_unique_combinations <- nrow(unique_combinations)
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create result nam
+    result_countsMM[[result_name]] <- total_unique_combinations # Store result
+  }
+}
 ```
+
+#### Ol Jogi
+
+```{r}
+# Remove unnecessary columns
+OJdata2022 <- OJdata2022[, c("Image.ID", "Site.Name", "Latitude", "Longitude", "Species", "Timestamp")] 
+
+# Rename current columns to match
+colnames(OJdata2022) <- c("PHOTO", "LOC_ID", "Lat", "Long", "Species", "DATETIME")
+
+# Create date and time columns
+OJdata2022$DATETIME <- as.POSIXct(OJdata2022$DATETIME, format = "%d/%m/%Y %H:%M")
+OJdata2022$DATE <- as.Date(OJdata2022$DATETIME)
+OJdata2022$TIME <- format(OJdata2022$DATETIME,  "%H:%M:%S")
+OJdata2022$GRID <- "OJ"
+OJdata2022$value <- 1
+OJdata2022 <- OJdata2022[, c("PHOTO", "GRID", "LOC_ID", "Species", "DATETIME", "DATE", "TIME", "value")]
+
+# Count number of days with detections of each species per site
+datasets <- c("OJdata2022")
+species <- c("Aardwolf", "Bat-eared Fox", "Black-backed jackal", "Caracal", "Leopard", "Lion", "Ratel", "Serval", "Spotted hyeana", "Striped Hyaena", "Wild Dog", "Wildcat")
+
+# Initialize an empty list to store the results
+result_countsOJ <- list()
+
+# Loop over species and datasets
+for (sp in species) {
+  for (ds in datasets) {
+    dataset <- get(ds)
+    filtered_data <- subset(dataset, Species == sp)  # Filter rows where Species matches current species
+    unique_combinations <- unique(filtered_data[, c("DATE", "LOC_ID")]) # Count unique DATE × LOC_ID combinations
+    total_unique_combinations <- nrow(unique_combinations)
+    result_name <- paste0(ds, "_", gsub(" ", "_", sp)) # Create result nam
+    result_countsOJ[[result_name]] <- total_unique_combinations # Store result
+  }
+}
+```
+
 
 ### Match species names across datasets and remove unneccsary species data
 
 ```{r}
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025", "MM_data")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025", "MMdata2018", "OJdata2022" )
 
 # Create a named vector for recoding
 species_recode <- c(
@@ -818,9 +929,11 @@ species_recode <- c(
   "hyena_spotted" = "Spotted hyaena",
   "spotted hyaena" = "Spotted hyaena",
   "Spotted hyena" = "Spotted hyaena",
+  "Spotted hyeana" = "Spotted hyaena",
   "striped hyaena" = "Striped hyaena",
   "Striped hyena" = "Striped hyaena",
   "hyena_striped" = "Striped hyaena",
+  "Striped Hyaena" = "Striped hyaena",
   "Wild Dog - Lycaon pictus" = "African wild dog",
   "Wild Dog" = "African wild dog",
   "wild dog" = "African wild dog",
@@ -831,6 +944,7 @@ species_recode <- c(
   "African Civet - Civettictis civetta" = "African civet",
   "civet" = "African civet",
   "Honey Badger - Mellivora capensis" = "Honey badger",
+  "Ratel" = "Honey badger",
   "honey badger" = "Honey badger",
   "African Wildcat - Felis lybica" = "African wildcat",
   "wildcat" = "African wildcat",
@@ -839,6 +953,7 @@ species_recode <- c(
   "s-s jackal" = "Side-striped jackal",
   "bat-eared fox" = "Bat-eared fox",
   "bateared_fox" = "Bat-eared fox",
+  "Bat-eared Fox" = "Bat-eared fox",
   "Bat-eared Fox" = "Bat-eared fox",
   "aardwolf" = "Aardwolf",
   "b-b jackal" = "Black-backed jackal"
@@ -858,7 +973,7 @@ for (ds in datasets) {
 
 ```{r}
 # Save clean datasets
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025", "MM_data")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025", "MMdata2018", "OJdata2022")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
