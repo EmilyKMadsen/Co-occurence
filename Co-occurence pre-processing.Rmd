@@ -16,12 +16,16 @@ library(stringr)
 library(sf)
 library(terra)
 library(rnaturalearth)
+library(exactextractr)
+library(raster)
 library(ggplot2)
 library(tidyterra)
 library(mapview)
 library(viridis)
 library(spatstat)
 library(gstat)
+library(RANN)
+library(corrplot)
 ```
 
 # Site pre-processing
@@ -69,6 +73,10 @@ LKlayout2025 <- read.csv("KLKE_CT trap layout_midday.csv", header = TRUE)
 # read Maasai Mara data
 setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/BHP")
 MMlayout2018 <- read.csv("all_sites_effort_occupancy_v2_2018.csv", header = TRUE)
+
+# read Oljogi data
+setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/Ol Jogi")
+OJlayout2022 <- read.csv("Oljogi.csv", header = TRUE)
 ```
 
 ## Create spatial dataframes
@@ -181,6 +189,20 @@ for (ds in datasets) {
   assign(ds, df, envir = .GlobalEnv) # Overwrite the original dataset with the modified one
 }
 
+# Append year onto loc-IDs due to location inconsistencies
+ZBlayoutLL2020_spatial <- ZBlayoutLL2020_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
+ZBlayoutLL2021_spatial <- ZBlayoutLL2021_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
+ZBlayoutLL2022_spatial <- ZBlayoutLL2022_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
+ZBlayoutR2020_spatial <- ZBlayoutR2020_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
+ZBlayoutR2021_spatial <- ZBlayoutR2021_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
+ZBlayoutR2022_spatial <- ZBlayoutR2022_spatial %>%
+  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
+
 # Project into Africa Albers
 # Define Africa Albers Equal Area CRS
 africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
@@ -201,7 +223,9 @@ for (ds in datasets) {
 }
 ```
 
-### Kenya Laikipia
+### Kenya 
+
+####Laikipia
 
 ```{r}
 # Laikipia
@@ -241,7 +265,7 @@ for (ds in datasets) {
 }
 ```
 
-### Kenya Maasai Mara
+#### Maasai Mara
 
 ```{r}
 # Maasai Mara ~ format very different so going to import another dataset and use that
@@ -280,10 +304,45 @@ for (ds in datasets) {
 }
 ```
 
+#### Ol Jogi
+
+```{r}
+datasets <- c("OJlayout2022")
+
+# Loop through sites to extract spatial data 
+for (ds in datasets) {
+  obj <- get(ds)
+  obj <- obj[, 3:5] # Keep only the first 3 columns LOC_ID, X, Y
+  obj <- obj[, c(1, 3, 2)]           # Swap columns 2 and 3
+  colnames(obj)[1] <- "LOC_ID" # Change column name
+  new_name <- paste0(ds, "_spatial") # Save to a new object with "_spatial" suffix
+  assign(new_name, obj, envir = .GlobalEnv)
+}
+
+# Remove duplicates
+OJlayout2022_spatial <- OJlayout2022_spatial[!duplicated(OJlayout2022_spatial$LOC_ID), ]
+
+# Define CRS
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +datum=WGS84 +units=m +no_defs")
+
+# Convert, transform, and extract coords
+df_sf <- st_as_sf(OJlayout2022_spatial, coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE)
+df_aea <- st_transform(df_sf, africa_albers_crs)
+coords_aea <- st_coordinates(df_aea)
+
+# Add numeric Africa Albers coords back to the original data.frame
+OJlayout2022_spatial$X_AfricaAlbers <- coords_aea[,1]
+OJlayout2022_spatial$Y_AfricaAlbers <- coords_aea[,2]
+
+# Remove original lon/lat
+OJlayout2022_spatial$Longitude <- NULL
+OJlayout2022_spatial$Latitude  <- NULL
+```
+
 ### Save spatial datasets to drive
 
 ```{r}
-datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial", "MMspatial2018_spatial")
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial", "MMspatial2018_spatial", "OJlayout2022_spatial")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
@@ -334,7 +393,9 @@ for (ds in datasets) {
 #ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
 ```
 
-### Kenya Laikipia
+### Kenya 
+
+#### Laikipia
 
 ```{r}
 datasets <- c("LKlayout2025")
@@ -349,7 +410,7 @@ for (ds in datasets) {
 }
 ```
 
-### Kenya Maasai Mara
+#### Maasai Mara
 
 ```{r}
 MMlayout2018 <- as.data.frame(t(MMlayout2018)) 
@@ -362,6 +423,14 @@ MMlayout2018 <- MMlayout2018[, c(ncol(MMlayout2018), 1:(ncol(MMlayout2018)-1))] 
 colnames(MMlayout2018)[1] <- "" # remove column name
 MMlayout2018[is.na(MMlayout2018)] <- 0 # change all NAs to 0
 MMlayout2018[] <- lapply(MMlayout2018, function(x) {if (is.character(x)) sub("^\\s+1$", "1", x) else x}) # clean spaces
+```
+
+#### Ol Jogi
+
+```{r}
+datasets <- c("OJlayout2022")
+
+
 ```
 
 ### Save clean layout datasets
@@ -426,6 +495,7 @@ LKdata2025 <- read.csv("Camera_trap_uncleaned2.csv", header = TRUE)
 setwd("~/3. Thesis/Chapter 3 - Co-occcurence/Data/BHP")
 
 MMdata2018 <- read.csv("ML2018.csv", header = TRUE)
+MMdatahyaena <- read.csv("hyena_aardwolf_2018_ML.csv", header = TRUE)
 MMhyaena <- read.csv("Hyena-export.csv", header = TRUE)
 ```
 
@@ -499,7 +569,7 @@ for (ds in datasets) {
 #### Lower Luangwa  
 
 ```{r}
-# NOTE: These are processed separately as there are and different issues for each file
+# NOTE: These are processed separately as there are different issues for each file
 
 # LL2020 cleaning
 ZBdataLL2020 <- ZBdataLL2020 %>% rename(Species = Tags, DATE = Date, LOC_ID = Area) # Rename columns To = From
@@ -652,7 +722,9 @@ for (sp in species) {
 }
 ```
 
-### Kenya Laikipia
+### Kenya 
+
+#### Laikipia
 
 ```{r}
 names(LKdata2025)[names(LKdata2025) == "Image.ID"] <- "PHOTO"  # Rename Image.ID to PHOTO
@@ -680,12 +752,11 @@ LKdata2025 <- LKdata2025 %>% # split rows with two species
   mutate(Species = str_trim(Species))
 ```
 
-### Kenya Maasai Mara
+#### Maasai Mara
 
 ```{r}
-# Remove species not needed and set up to match
+# Remove species not needed and set up main dataset to match
 keep_species <- c(
-  "hyena_aardwolf",
   "serval",
   "jackal",
   "lion",
@@ -702,23 +773,39 @@ colnames(MMdata2018) <- c("PHOTO", "Species", "LOC_ID", "DATETIME", "DATE") # re
 MMdata2018 <- MMdata2018[, c("PHOTO", "LOC_ID", "Species", "DATETIME", "DATE")] # reorder
 
 MMdata2018 <- cbind(MMdata2018[1], GRID = "MM", MMdata2018[-1])  # Insert new column 2 called GRID with value MM
-MMdata2018$value <- 1
+MMdata2018$value <- 1 # add value column for count
 MMdata2018$TIME <- sub(".* ", "", MMdata2018$DATETIME)  # extract time after the space
 MMdata2018 <- MMdata2018[, c("PHOTO", "GRID", "LOC_ID", "Species", "DATETIME", "DATE", "TIME", "value")] # reorder
 
-# edit hyaena data and set up to match
-keep_species <- c("hyena_spotted", "aardwolf", "hyena_striped")
-
+# edit hyaena data 
+keep_species <- c("hyena_spotted", "aardwolf", "hyena_striped") # remove unwanted species
 MMhyaena <- MMhyaena[MMhyaena$label %in% keep_species, ]
 
-colnames(MMhyaena) <- c("PHOTO", "xmin", "ymin", "xmax", "Species") # rename
-# merge hyaena to main
+# merge hyaena split to hyaena metadata and set up to match main data
+MM_joined <- inner_join(MMdatahyaena, MMhyaena, by = "img_id") # join metadata
+
+MM_joined <- MM_joined[, c("img_id", "label", "location", "datetime", "date")] 
+colnames(MM_joined) <- c("PHOTO", "Species", "LOC_ID", "DATETIME", "DATE") # rename
+
+MM_joined$DATETIME <- format(as.POSIXct(MM_joined$DATETIME, format = "%d/%m/%Y %H:%M"), "%Y-%m-%d %H:%M:%S") # reformat DATETIME
+MM_joined$DATE <- format(as.Date(MM_joined$DATE, format = "%d/%m/%Y"), "%Y-%m-%d") # reformat DATE
+
+MM_joined$GRID <- "MM" # Insert new column called GRID with value MM
+MM_joined$value <- 1  # add value column for count
+MM_joined$TIME <- sub(".* ", "", MM_joined$DATETIME)  # extract time after the space
+MM_joined <- MM_joined[, c("PHOTO", "GRID", "LOC_ID", "Species", "DATETIME", "DATE", "TIME", "value")] # reorder
+
+# join to main
+MM_data <- bind_rows(MMdata2018, MM_joined)
+
+# fix jackal now to avoid later complications
+MM_data$Species[MM_data$Species == "jackal"] <- "Black-backed jackal"
 ```
 
 ### Match species names across datasets and remove unneccsary species data
 
 ```{r}
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025", "MM_data")
 
 # Create a named vector for recoding
 species_recode <- c(
@@ -728,10 +815,12 @@ species_recode <- c(
   "leopard" = "Leopard",
   "cheetah" = "Cheetah",
   "Spotted Hyaena - Crocuta crocuta" = "Spotted hyaena",
+  "hyena_spotted" = "Spotted hyaena",
   "spotted hyaena" = "Spotted hyaena",
   "Spotted hyena" = "Spotted hyaena",
   "striped hyaena" = "Striped hyaena",
   "Striped hyena" = "Striped hyaena",
+  "hyena_striped" = "Striped hyaena",
   "Wild Dog - Lycaon pictus" = "African wild dog",
   "Wild Dog" = "African wild dog",
   "wild dog" = "African wild dog",
@@ -749,6 +838,7 @@ species_recode <- c(
   "Side-Striped Jackal - Canis adustus" = "Side-striped jackal",
   "s-s jackal" = "Side-striped jackal",
   "bat-eared fox" = "Bat-eared fox",
+  "bateared_fox" = "Bat-eared fox",
   "Bat-eared Fox" = "Bat-eared fox",
   "aardwolf" = "Aardwolf",
   "b-b jackal" = "Black-backed jackal"
@@ -768,7 +858,7 @@ for (ds in datasets) {
 
 ```{r}
 # Save clean datasets
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025", "MM_data")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
@@ -804,9 +894,343 @@ cam_10km_buffer <- buffer(camlocs_vec, width = 10000)
 mapview(cam_10km_buffer)
 ```
 
+## Temperature
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Temperature/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("temp"), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting temperature rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+temp_aa <- project(temp, africa_albers_crs, method = "near")
+
+# Check they match
+plot(temp_aa)
+plot(study_vect, add=T)
+
+# Mask
+temp_mask <- mask(temp_aa, study_vect)
+temp_crop <- crop(temp_mask, study_vect)
+plot(temp_crop)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(temp_crop, "temp_mask.tiff", overwrite=T)
+```
+
+## Temp seasonality
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Temp_seasonality/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("temp_seas"), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+temp_seas_aa <- project(temp_seas, africa_albers_crs, method = "near")
+
+# Check they match
+plot(temp_seas_aa)
+plot(study_vect, add=T)
+
+# Mask & crop
+temp_seas_mask <- mask(temp_seas_aa, study_vect)
+temp_seas_crop <- crop(temp_seas_mask, study_vect)
+plot(temp_seas_crop)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(temp_seas_crop, "temp_seas_mask.tiff", overwrite=T)
+```
+
+## Land temp
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Land temp/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("land_temp", i), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+land_temp_aa1 <- project(land_temp1, africa_albers_crs, method = "near")
+land_temp_aa2 <- project(land_temp2, africa_albers_crs, method = "near")
+
+# Merging landcover rasters
+land_temp_aa <- merge(land_temp_aa1, land_temp_aa2)
+
+# Check they match
+plot(land_temp_aa)
+plot(study_vect, add=T)
+
+# Mask & crop
+land_temp_mask <- mask(land_temp_aa, study_vect)
+land_temp_crop <- crop(land_temp_mask, study_vect)
+plot(land_temp_crop)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(land_temp_crop, "land_temp_mask.tiff", overwrite=T)
+```
+
+## Rainfall
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Precipitation/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("precip"), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+precip_aa <- project(precip, africa_albers_crs, method = "near")
+
+# Check they match
+plot(precip_aa)
+plot(study_vect, add=T)
+
+# Mask & crop
+precip_mask <- mask(precip_aa, study_vect)
+precip_crop      <- crop(precip_mask, study_vect)
+plot(precip_crop)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(precip_crop, "precip_mask.tiff", overwrite=T)
+```
+
+## Rain seasonality
+
+### Prepare raster
+
+```{r}
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Precip_seasonality/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("precip_seas"), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+precip_seas_aa <- project(precip_seas, africa_albers_crs, method = "near")
+
+# Check they match
+plot(precip_seas_aa)
+plot(study_vect, add=T)
+
+# Mask & crop
+precip_seas_mask <- mask(precip_seas_aa, study_vect)
+precip_seas_crop <- crop(precip_seas_mask, study_vect)
+plot(precip_seas_crop)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+writeRaster(precip_seas_crop, "precip__seas_mask.tiff", overwrite=T)
+```
+
+## Distance to water
+
+### Prepare raster
+
+```{r}
+# read in land cover
+lndc_mask <- rast("C:/R Projects/Co-occurence/lndc_mask.tiff") 
+
+# make just water raster
+water <- mask(lndc_mask, lndc_mask, maskvalues = 1, inverse = TRUE)
+writeRaster(water, "water.tiff", overwrite=T)
+
+# reproject to 50m resolution
+water_50m <- aggregate(water, fact = 5, fun = max, na.rm = TRUE)
+
+# calcualte distance and mask to study area
+water_dist <- distance(water_50m, unit = "km")
+water_dist <- mask(water_dist, study_vect)
+
+writeRaster(water_dist, "water_dist.tiff", overwrite=T)
+```
+
+## Area protected classification
+
+### Prepare raster
+
+```{r}
+# read in raster
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/WDPA/")
+WDPA <- rast("WDPA_PolygonToRaster.tif")
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+WDPA_aa <- project(WDPA, africa_albers_crs, method = "near")
+
+# Check they match
+plot(WDPA_aa)
+plot(study_vect, add=T)
+
+# Mask & crop
+WDPA_mask <- mask(WDPA_aa, study_vect)
+WDPA_mask <- crop(WDPA_mask, study_vect)
+plot(WDPA_mask)
+plot(study_vect,add=T)
+plot(camlocs_vec, add=T)
+
+# Reclassify values
+reclass <- matrix(
+  c(0, NA,
+    1, 6,
+    2, NA,
+    3, 4,
+    4, 2,
+    5, NA,
+    6, 1,
+    7, NA,
+    8, 1,
+    9, 3
+  ),
+  ncol = 2,
+  byrow = TRUE
+)
+
+WDPA_mask <- classify(WDPA_mask, reclass)
+plot(WDPA_mask)
+
+writeRaster(WDPA_mask, "WDPA_mask.tiff", overwrite=T)
+```
+
+# Extract exact point covariates ~ skip to here if reimporting rasters
+
+```{r}
+# Read rasters back in
+lndc_crop<- rast("C:/R Projects/Co-occurence/lndc_mask.tiff") 
+temp_crop <- rast("C:/R Projects/Co-occurence/temp_mask.tiff") 
+temp_seas_crop <- rast("C:/R Projects/Co-occurence/temp_seas_mask.tiff") 
+precip_crop <- rast("C:/R Projects/Co-occurence/precip_mask.tiff") 
+precip_seas_crop <- rast("C:/R Projects/Co-occurence/precip__seas_mask.tiff") 
+land_temp_crop <-  rast("C:/R Projects/Co-occurence/land_temp_mask.tiff")
+water_dist <- rast("C:/R Projects/Co-occurence/water_dist.tiff") 
+WDPA_mask <- rast("C:/R Projects/Co-occurence/WDPA_mask.tiff") 
+
+# create a new lndc and land_temp has exactly the same geometry as temp_crop
+lndc_matched <- resample(lndc_crop, temp_crop, method = "near")
+land_temp_matched <- resample(land_temp_crop, temp_crop, method = "near")
+water_matched <- resample(water_dist, temp_crop, method = "near")
+WDPA_matched <- resample(WDPA_mask, temp_crop, method = "near")
+
+# Stack rasters
+stack <- c(lndc_matched, temp_crop, temp_seas_crop, land_temp_matched, precip_crop, precip_seas_crop, water_matched, WDPA_matched) # add PA classification
+
+# Extract to camera stations
+values <- extract(stack, camlocs_vec, df=T, bind=T)
+head(values)
+names(values)[2] <- "land_cover"
+names(values)[3] <- "temp"
+names(values)[4] <- "temp_seas"
+names(values)[5] <- "land_temp"
+names(values)[6] <- "precip"
+names(values)[7] <- "precip_seas"
+names(values)[8] <- "water_dist"
+names(values)[9] <- "WDPA"
+head(values)
+```
+
 ## Landcover
 
-##### Prepare raster - not needed if reimporting saved masked raster
+### Prepare raster - not needed if reimporting saved masked raster
 
 ```{r}
 setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Landcover/")
@@ -846,20 +1270,21 @@ lndc_aa <- merge(lndc1_aa, lndc2_aa, lndc3_aa, lndc4_aa, lndc5_aa, lndc6_aa, lnd
 plot(lndc_aa)
 plot(study_vect, add=T)
 
-# Mask
+# Mask & crop & extend to match extents
 lndc_mask <- mask(lndc_aa, study_vect)
-plot(lndc_mask)
+lndc_crop <- crop(lndc_mask, study_vect)
+plot(lndc_crop)
 plot(study_vect,add=T)
 plot(camlocs_vec, add=T)
 
-writeRaster(lndc_mask, "lndc_mask.tiff", overwrite=T)
+writeRaster(lndc_crop, "lndc_mask.tiff", overwrite=T)
 ```
 
-##### Caclulate proportions within buffer
+### Caclulate proportions within buffer
 
 ```{r}
 # Read raster back in
-lndc_mask <- rast("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/lndc_mask.tiff") 
+lndc_mask <- rast("C:/R Projects/Co-occurence/lndc_mask.tiff") 
 
 # Extract raster values inside each buffer polygon
 lndc_vals <- extract(lndc_mask, cam_1000m_buffer)
@@ -883,7 +1308,7 @@ lndc_vals_reclassified <- lndc_vals %>%
     )
   )
 
-# Calculate proportions of differnt landcover classes within the buffer
+# Calculate proportions of different landcover classes within the buffer
 lndc_prop <- lndc_vals_reclassified %>%
   group_by(LOC_ID, landcover_class_grouped) %>% # Group by each unique camera location and land cover class
   summarise(count = n(), .groups = "drop_last") %>% # Count the number of pixels for each combination
@@ -898,11 +1323,10 @@ lndc_prop <- lndc_vals_reclassified %>%
     values_fill = 0                     # Fill missing proportions with 0
   )
 
-# Plot graph of closed proportion
-ggplot(lndc_prop, aes(x = closed)) +
+# Plot graph 
+lndcpropplot <- ggplot(lndc_prop, aes(x = closed)) +
   geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") + # Adjust binwidth as needed
   labs(
-    title = "Distribution of 'Closed' Landcover Proportion",
     x = "Proportion of Closed Landcover",
     y = "Frequency"
   ) +
@@ -911,10 +1335,10 @@ ggplot(lndc_prop, aes(x = closed)) +
 
 ## Human population 
 
-##### Prepare raster - skip if reimporting merged raster in next step
+### Prepare raster - skip if reimporting merged raster in next step
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Worldpop/")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Worldpop/")
 
 # List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
@@ -945,11 +1369,11 @@ plot(pop_focal)
 writeRaster(pop_aa, "popraster.tiff", overwrite=T)
 ```
 
-##### Calculate total within buffer
+### Calculate total within buffer
 
 ```{r}
 # Read raster back in
-pop_ras <- rast("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Analysis/Co-occurence/popraster.tiff") 
+pop_ras <- rast("C:/R Projects/Co-occurence/popraster.tiff") 
 
 # Extract total values
 popvals <- extract(pop_ras, cam_10km_buffer, "sum")
@@ -969,9 +1393,9 @@ names(popvals)[2] <- "hum_pop"
 # Log transform
 popvals$log_hum_pop <- log1p(popvals$hum_pop)
 
-# Plot human population average
-ggplot(popvals, aes(x = log_hum_pop)) +
-  geom_histogram(fill = "dodgerblue", color = "white") +
+# Plot graph
+popplot <- ggplot(popvals, aes(x = log_hum_pop)) +
+  geom_histogram(fill = "skyblue", color = "black") +
   labs(
     x = "Log Transformed Total Population",
     y = "Count"
@@ -979,12 +1403,12 @@ ggplot(popvals, aes(x = log_hum_pop)) +
   theme_minimal()
 ```
 
-## Slope average within radius
+## Slope
 
-### Prepare raster
+### Prepare raster ~ Skip this step if reimporting just reimporting tiff file in next step
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Slope/")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Slope/")
 
 # List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
@@ -994,11 +1418,59 @@ for (i in seq_along(files)) {
   assign(paste0("slope", i), rast(files[i]))
 }
 
+# Re-projecting landcover rasters to AA ~ only including relevant TIFFs
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+slope1_aa <- project(slope1, africa_albers_crs, method = "near")
+slope3_aa <- project(slope3, africa_albers_crs, method = "near")
+slope4_aa <- project(slope4, africa_albers_crs, method = "near")
+slope5_aa <- project(slope5, africa_albers_crs, method = "near")
+slope7_aa <- project(slope7, africa_albers_crs, method = "near")
+slope8_aa <- project(slope8, africa_albers_crs, method = "near")
+
+# Merging landcover rasters
+slope_aa <- merge(slope1_aa, slope3_aa, slope4_aa, slope5_aa, slope7_aa, slope8_aa)
+
+# Check they match
+plot(slope_aa)
+plot(camlocs_vec, add=T)
+
+writeRaster(slope_aa, "slope.tiff", overwrite=T)
 ```
 
-## Roughness raster - average within radius
+### Caclulate average within buffer
 
-### Prepare raster
+```{r}
+# Read raster back in
+slope <- rast("C:/R Projects/Co-occurence/slope.tiff")
+
+# Extract raster values inside each buffer polygon
+slope_vals <- extract(slope, cam_1000m_buffer, fun = mean, na.rm = TRUE)
+
+# Create a lookup table to map the internal buffer ID (row number) to LOC_ID
+loc_id_map <- data.frame(
+  ID = 1:nrow(cam_1000m_buffer),  # This creates the internal IDs (1, 2, 3, ...)
+  LOC_ID = cam_1000m_buffer$LOC_ID # And maps them to your LOC_ID attribute
+)
+
+# Join the LOC_ID to your 'vals' data.frame
+slope_vals<- merge(slope_vals, loc_id_map, by = "ID")
+
+# Rename 2nd column
+names(slope_vals)[2] <- "slope"
+
+# Plot graph 
+slopeplot <- ggplot(slope_vals, aes(x = slope)) +
+  geom_histogram(binwidth = 0.1, fill = "skyblue", color = "black") + 
+  labs(
+    x = "Average slope",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+## Roughness
+
+### Prepare raster ~ Skip this step if reimporting just reimporting tiff file in next step
 
 ```{r}
 setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Roughness/")
@@ -1008,26 +1480,86 @@ files <- list.files(pattern = "\\.tif$")
 
 # Loop through each file and import
 for (i in seq_along(files)) {
-  assign(paste0("rough", i), rast(files[i]))
+  assign(paste0("dem", i), rast(files[i]))
 }
+
+# Re-projecting landcover rasters to AA 
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+dem1_aa <- project(dem1, africa_albers_crs, method = "near")
+dem2_aa <- project(dem2, africa_albers_crs, method = "near")
+dem3_aa <- project(dem3, africa_albers_crs, method = "near")
+
+# Merging landcover rasters
+dem_aa <- merge(dem1_aa, dem2_aa, dem3_aa)
+
+# Check they match
+plot(dem_aa)
+plot(camlocs_vec, add=T)
+
+writeRaster(dem_aa, "dem.tiff", overwrite=T)
 ```
 
-## Soil moisture
-
-### Prepare raster ~ skip if reimporting
+### Calculate roughness within buffer
 
 ```{r}
-setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/soil moisture/")
+# Read raster back in
+elv <- rast("C:/R Projects/Co-occurence/dem.tiff")
+
+# Calculate roughness within buffer
+# crop & mask DEM to buffer extent
+elv_crop <- mask(crop(elv, ext(cam_1000m_buffer)), cam_1000m_buffer)
+
+# 3x3 focal window
+w <- matrix(1, 3, 3)
+
+# focal range (write to temp file to avoid memory issues)
+range_r <- focal(
+  elv_crop,
+  w = w,
+  fun = function(x, ...) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE) - min(x, na.rm = TRUE),
+  na.policy = "omit",
+  filename = tempfile(fileext = ".tif"),
+  overwrite = TRUE
+)
+
+# extract mean roughness per buffer
+res <- extract(range_r, cam_1000m_buffer, fun = mean, na.rm = TRUE)
+
+# final output
+rough_vals <- data.frame(
+  LOC_ID = cam_1000m_buffer$LOC_ID,
+  rough_range = res[[2]]
+)
+
+rough_vals
+
+# Plot graph 
+roughplot <- ggplot(rough_vals, aes(x = rough_range)) +
+  geom_histogram(binwidth = 0.1, fill = "skyblue", color = "black") + # Adjust binwidth as needed
+  labs(
+    x = "Average roughness",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+## Clay content 
+
+### Prepare raster
+
+```{r}
+# read in raster
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/Soil/")
 
 # List all TIFF files in the working directory
 files <- list.files(pattern = "\\.tif$")
 
 # Loop through each file and import
 for (i in seq_along(files)) {
-  assign(paste0("moist", i), rast(files[i]))
+  assign(paste0("soil"), rast(files[i]))
 }
 
-# Crop and Mask by country
+# Mask by country
 # Download country outlines
 countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
 study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
@@ -1037,7 +1569,203 @@ africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +
 study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
 study_vect <- vect(study_countries_aea)  # convert to terra format
 
-# Re-projecting landcover rasters to AA
+# Re-projecting moisture rasters to AA
+africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+soil_aa <- project(soil, africa_albers_crs, method = "near")
+
+# Check they match
+plot(soil_aa)
+plot(study_vect, add=T)
+
+# Mask
+soil_mask <- mask(soil_aa, study_vect)
+soil_mask <- crop(soil_aa, study_vect)
+soil_mask <- soil_mask[["mean_0_20"]]
+plot(soil_mask)
+plot(study_vect,add=T)
+
+writeRaster(soil_mask, "soil_mask.tiff", overwrite=T)
+```
+
+### Calculate clay content wthin buffer
+
+```{r}
+# Read raster back in
+soil <- rast("C:/R Projects/Co-occurence/soil_mask.tiff")
+
+# Extract raster values inside each buffer polygon
+soil_vals <- extract(soil, cam_1000m_buffer, fun = mean, na.rm = TRUE)
+
+# Create a lookup table to map the internal buffer ID (row number) to LOC_ID
+loc_id_map <- data.frame(
+  ID = 1:nrow(cam_1000m_buffer),  # This creates the internal IDs (1, 2, 3, ...)
+  LOC_ID = cam_1000m_buffer$LOC_ID # And maps them to your LOC_ID attribute
+)
+
+# Join the LOC_ID to your 'vals' data.frame
+soil_vals<- merge(soil_vals, loc_id_map, by = "ID")
+
+# Rename 2nd column
+names(soil_vals)[2] <- "clay"
+
+# Plot graph 
+clayplot <- ggplot(soil_vals, aes(x = clay)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") + # Adjust binwidth as needed
+  labs(
+    x = "Average clay content",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+# Add buffed covariates and write csv
+
+```{r}
+values <- merge(values, lndc_prop, by = "LOC_ID") 
+values <- merge(values, popvals, by = "LOC_ID") 
+values <- merge(values, slope_vals, by = "LOC_ID")
+values <- merge(values, rough_vals, by = "LOC_ID")
+values <- merge(values, soil_vals, by = "LOC_ID")
+
+# update names for landcover
+head(values)
+names(values)[10] <- "closed_prop"
+names(values)[11] <- "open_prop"
+names(values)[12] <- "other_prop"
+head(values)
+
+spatial_covs <- as.data.frame(values)
+
+spatial_covs <- spatial_covs[, !names(spatial_covs) %in% c("ID.x", "ID.y", "ID")]
+
+write.csv(values, "spatial_covariates.csv", row.names=F)
+```
+
+## Plot covariate graphs
+
+```{r}
+# lndc
+lndcplot <- ggplot(values, aes(x = land_cover)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Landcover",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# temp
+tempplot <- ggplot(values, aes(x = temp)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Average temperature",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# temp seas
+tempseasplot <- ggplot(values, aes(x = temp_seas)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Temperature seasonality",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# land temp
+landtempplot <- ggplot(values, aes(x = land_temp)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Land surface temperature",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# precipitation
+precipplot <- ggplot(values, aes(x = precip)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Average precipitation",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# precipitation seasonality
+precipseasplot <- ggplot(values, aes(x = precip_seas)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Precipitation seasonality",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# distance to water
+waterplot <- ggplot(values, aes(x = water_dist)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Distance to water",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+# WDPA
+wdpaplot <- ggplot(values, aes(x = WDPA)) +
+  geom_histogram(fill = "skyblue", color = "black") +
+  labs(
+    x = "Protected area classification",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+# Run correleation test
+
+```{r}
+covs_num <- spatial_covs[, sapply(spatial_covs, is.numeric)]
+cor_mat <- cor(covs_num, use = "complete.obs")
+
+# coloured matrix plot
+corr_plot <- corrplot(
+  cor_mat,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.cex = 0.8,
+  addCoef.col = "black",
+  number.cex = 0.6
+)
+```
+
+
+
+# Not required
+
+
+## Soil moisture
+
+### Prepare raster ~ skip if reimporting
+
+```{r}
+setwd("C:/Users/lady7240.BIOLOGY/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/Shapefiles/soil moisture/")
+
+# List all TIFF files in the working directory
+files <- list.files(pattern = "\\.tif$")
+
+# Loop through each file and import
+for (i in seq_along(files)) {
+  assign(paste0("moist", i), rast(files[i]))
+}
+
+# Mask by country
+# Download country outlines
+countries <- ne_download(scale = "large", type = 'countries', returnclass="sf" )
+study_countries <- countries[countries$NAME %in% c("Kenya", "Tanzania", "Zambia"),]
+
+# Re-project countries into Africa Albers
+africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+study_countries_aea <- st_transform(study_countries, crs = africa_albers_crs)
+study_vect <- vect(study_countries_aea)  # convert to terra format
+
+# Re-projecting moisture rasters to AA
 africa_albers_crs <- "+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
 moist1_aa <- project(moist1, africa_albers_crs, method = "near")
 moist2_aa <- project(moist2, africa_albers_crs, method = "near")
@@ -1094,86 +1822,3 @@ ggplot(moistvals, aes(x = log_soil_moist)) +
   ) +
   theme_minimal()
 ```
-
-## Temperature raster - average within radius
-
-```{r}
-
-```
-
-## Temp seasonality raster - average within radius
-
-```{r}
-
-```
-
-### Land temp raster - average within radius
-
-```{r}
-
-```
-
-### Rainfall raster - average within radius
-
-```{r}
-
-```
-
-### Rain seasonality raster - average within radius
-
-```{r}
-
-```
-
-### Distance to water raster - at exact point calculated from landcover layer
-
-```{r}
-
-```
-
-### Distance to 1-4 WDPA raster - at exact point
-
-```{r}
-
-```
-
-### Area protected classification - at exact point
-
-```{r}
-
-```
-
-## Extract covariates for exact point extraction
-
-```{r}
-# Stack rasters
-stack <- c(lndc_mask) # add PA classification, distance to 1-4 WDPA, distance to water
-
-# Extract to camera stations
-values <- terra::extract(stack, camlocs_vec, df=T, bind=T)
-head(values)
-names(values)[2] <- "land_cover"
-```
-
-## Merge with raidus layers
-
-```{r}
-values <- merge(values, lndc_prop, by = "LOC_ID") 
-values <- merge(values, popvals, by = "LOC_ID") 
-values <- merge(values, moistvals, by = "LOC_ID") # add slope, roughness, rainfall, rainfall seasonality, temperature, temperature seasonality, land temperature
-head(values)
-names(values)[3] <- "closed_prop"
-names(values)[4] <- "open_prop"
-names(values)[5] <- "unknown_prop"
-head(values)
-```
-
-## Create survey location covariate
-
-## Write csv
-
-```{r}
-setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
-write.csv(values, "spatial_covariates.csv", row.names=F)
-```
-
