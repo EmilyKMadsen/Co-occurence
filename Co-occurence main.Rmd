@@ -46,6 +46,7 @@ for (file in files) {
 
 ## TEMPORARY remove OJ files
 rm(OJ2022cap, OJ2022sp)
+
 ```
 
 # Data preparation
@@ -240,7 +241,7 @@ effort_matrix[effort_matrix == 0] <- NA # Replace all 0s (no effort) with NA
 storage.mode(effort_matrix) <- "double"
 ```
 
-## Create field season matrix (sites × weeks)
+## Create field season matrix (sites × weeks) 
 
 ```{r}
 fs_names <- grep("fs$", ls(), value = TRUE) # Identify all fieldseason dataset names
@@ -547,5 +548,15 @@ for (i in seq_along(d)) {
 }
 
 
+```
+
+## Find additional sites in Maasai Mara
+
+```{r}
+
+MM2018sp_only <- MM2018sp %>%
+  filter(!LOC_ID %in% MM2018lay[[1]])
+
+#NB13, MT06, MT50
 ```
 

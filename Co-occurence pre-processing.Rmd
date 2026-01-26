@@ -190,20 +190,6 @@ for (ds in datasets) {
   assign(ds, df, envir = .GlobalEnv) # Overwrite the original dataset with the modified one
 }
 
-# Append year onto loc-IDs due to location inconsistencies
-ZBlayoutLL2020_spatial <- ZBlayoutLL2020_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
-ZBlayoutLL2021_spatial <- ZBlayoutLL2021_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
-ZBlayoutLL2022_spatial <- ZBlayoutLL2022_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
-ZBlayoutR2020_spatial <- ZBlayoutR2020_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
-ZBlayoutR2021_spatial <- ZBlayoutR2021_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
-ZBlayoutR2022_spatial <- ZBlayoutR2022_spatial %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
-
 # Project into Africa Albers
 # Define Africa Albers Equal Area CRS
 africa_albers_crs <- st_crs("+proj=aea +lat_1=-18 +lat_2=21 +lat_0=0 +lon_0=25 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
@@ -222,6 +208,44 @@ for (ds in datasets) {
                          Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
   assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
 }
+
+# Merge year repeats into 1 and account for changes in location for some site IDs by adding a,b,c
+all_ZBLL_data <- bind_rows(ZBlayoutLL2020_spatial, ZBlayoutLL2021_spatial, ZBlayoutLL2022_spatial)
+all_ZBLL_data <- distinct(all_ZBLL_data, LOC_ID, X_AfricaAlbers, Y_AfricaAlbers, .keep_all = TRUE)
+all_ZBLL_data <- all_ZBLL_data %>% mutate(LOC_ID = as.character(LOC_ID))
+all_ZBLL_data <- all_ZBLL_data %>%
+  group_by(LOC_ID) %>%
+  mutate(
+    LOC_ID = if (n() > 1) {
+      paste0(LOC_ID, "_", letters[row_number()])
+    } else {
+      LOC_ID
+    }
+  ) %>%
+  ungroup()
+
+all_ZBR_data <- bind_rows(ZBlayoutR2020_spatial, ZBlayoutR2021_spatial, ZBlayoutR2022_spatial)
+all_ZBR_data <- distinct(all_ZBR_data, LOC_ID, X_AfricaAlbers, Y_AfricaAlbers, .keep_all = TRUE)
+all_ZBR_data <- all_ZBR_data %>% mutate(LOC_ID = as.character(LOC_ID))
+all_ZBR_data <- all_ZBR_data %>%
+  group_by(LOC_ID) %>%
+  mutate(
+    LOC_ID = if (n() > 1) {
+      paste0(LOC_ID, "_", letters[row_number()])
+    } else {
+      LOC_ID
+    }
+  ) %>%
+  ungroup()
+
+ZBlayoutLL_spatial <- all_ZBLL_data
+ZBlayoutR_spatial <- all_ZBR_data
+
+# Keep only the first year location of all the cameras
+ZBlayoutLL_spatial <- ZBlayoutLL_spatial %>% filter(!grepl("_(b|c)$", LOC_ID))
+ZBlayoutLL_spatial <- ZBlayoutLL_spatial %>% mutate(LOC_ID = sub("_a$", "", LOC_ID))
+ZBlayoutR_spatial <- ZBlayoutR_spatial %>% filter(!grepl("_(b|c)$", LOC_ID))
+ZBlayoutR_spatial <- ZBlayoutR_spatial %>% mutate(LOC_ID = sub("_a$", "", LOC_ID))
 ```
 
 ### Kenya 
@@ -300,6 +324,10 @@ for (ds in datasets) {
                          Y_AfricaAlbers = coords_aea[, 2]) # Combine LOC_ID and new coordinates
   assign(ds, df_final, envir = .GlobalEnv) # Overwrite the original dataset with the transformed coordinates
 }
+
+# Remove failed sites
+MMlayout2018_spatial <- MMlayout2018_spatial %>%
+  filter(!LOC_ID %in% c("NB13", "MT06", "MT50", "NB02"))
 ```
 
 #### Ol Jogi
@@ -340,7 +368,7 @@ OJlayout2022_spatial$Latitude  <- NULL
 ### Save spatial datasets to drive
 
 ```{r}
-datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL2020_spatial", "ZBlayoutLL2021_spatial", "ZBlayoutLL2022_spatial", "ZBlayoutR2020_spatial",  "ZBlayoutR2021_spatial", "ZBlayoutR2022_spatial", "LKlayout2025_spatial", "MMlayout2018_spatial", "OJlayout2022_spatial")
+datasets <- c("RRlayoutMIO2018_spatial", "RRlayoutRNP2018_spatial", "RRlayoutWMA2018_spatial", "RRlayoutRGI2019_spatial", "SNlayoutNMTL2020_spatial", "SNlayoutSKPE2021_spatial", "SNlayoutSKPW2021_spatial", "SNlayoutSLWN2021_spatial", "SNlayoutSMGN2021_spatial", "SNlayoutNKLC2022_spatial", "SNlayoutNMSK2022_spatial", "ZBlayoutLL_spatial", "ZBlayoutR_spatial",  "LKlayout2025_spatial", "MMlayout2018_spatial", "OJlayout2022_spatial")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
@@ -376,20 +404,6 @@ for (ds in datasets) {
 ```{r}
 datasets <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
 
-# Append year onto loc-IDs due to location inconsistencies
-ZBlayoutLL2020 <- ZBlayoutLL2020 %>%
-  mutate(Grid.cell = paste0(Grid.cell, "-2020"))
-ZBlayoutLL2021 <- ZBlayoutLL2021 %>%
-  mutate(Grid.cell = paste0(Grid.cell, "-2021"))
-ZBlayoutLL2022 <- ZBlayoutLL2022 %>%
-  mutate(Grid.cell = paste0(Grid.cell, "-2022"))
-ZBlayoutR2020 <- ZBlayoutR2020 %>%
-  mutate(Grid.cell = paste0(Grid.cell, "-2020"))
-ZBlayoutR2021 <- ZBlayoutR2021 %>%
-  mutate(Si1e.ID = paste0(Si1e.ID, "-2021"))
-ZBlayoutR2022 <- ZBlayoutR2022 %>%
-  mutate(Grid.Cell.ID = paste0(Grid.Cell.ID, "-2022"))
-
 # Loop through and modify each dataset to remove location data and match date format to Tanzania: DD.MM.YYYY -> DD/MM/YYYY and remove name of first column LOC_ID
 for (ds in datasets) {
   df <- get(ds)
@@ -403,20 +417,56 @@ for (ds in datasets) {
   assign(ds, df, envir = .GlobalEnv)
 }
 
-# Collapse cameras into sites
-for (ds in datasets) {
-  x <- get(ds)
-  x[is.na(x)] <- 0
-  x <- cbind(
-    x[!duplicated(x[, 1]), 1],
-    rowsum(x[, -1], x[, 1])
-  )
-  rownames(x) <- NULL
-  colnames(x)[1] <- ""
-  assign(ds, x, envir = .GlobalEnv)
+# Merge datasets for the same sites
+# Lower Luangwa
+ZBlayoutLL2020[[1]]  <- as.character(ZBlayoutLL2020[[1]]) 
+ZBlayoutLL2021[[1]]  <- as.character(ZBlayoutLL2021[[1]]) 
+ZBlayoutLL2022[[1]]  <- as.character(ZBlayoutLL2022[[1]]) 
+names(ZBlayoutLL2020)[1] <- "LOC"
+names(ZBlayoutLL2021)[1] <- "LOC"
+names(ZBlayoutLL2022)[1] <- "LOC"
+
+ZBlayoutLL <- full_join(
+  as.data.frame(ZBlayoutLL2020, stringsAsFactors = FALSE, check.names = FALSE),
+  as.data.frame(ZBlayoutLL2021, stringsAsFactors = FALSE, check.names = FALSE),
+  by = names(ZBlayoutLL2020)[1]
+)
+
+ZBlayoutLL <- full_join(
+  as.data.frame(ZBlayoutLL, stringsAsFactors = FALSE, check.names = FALSE),
+  as.data.frame(ZBlayoutLL2022, stringsAsFactors = FALSE, check.names = FALSE),
+  by = names(ZBlayoutLL)[1]
+)
+
+# Replace NAs with 0
+if (ncol(ZBlayoutLL) > 1) {
+  ZBlayoutLL[-1] <- lapply(ZBlayoutLL[-1], function(col) { col[is.na(col)] <- 0; col })
 }
 
-#ZBlayoutLL2020 <- ZBlayoutLL2020[, -98]
+# Rufunsa
+ZBlayoutR2020[[1]]  <- as.character(ZBlayoutR2020[[1]]) 
+ZBlayoutR2021[[1]]  <- as.character(ZBlayoutR2021[[1]]) 
+ZBlayoutR2022[[1]]  <- as.character(ZBlayoutR2022[[1]]) 
+names(ZBlayoutR2020)[1] <- "LOC"
+names(ZBlayoutR2021)[1] <- "LOC"
+names(ZBlayoutR2022)[1] <- "LOC"
+
+ZBlayoutR <- full_join(
+  as.data.frame(ZBlayoutR2020, stringsAsFactors = FALSE, check.names = FALSE),
+  as.data.frame(ZBlayoutR2021, stringsAsFactors = FALSE, check.names = FALSE),
+  by = names(ZBlayoutR2020)[1]
+)
+
+ZBlayoutR <- full_join(
+  as.data.frame(ZBlayoutR, stringsAsFactors = FALSE, check.names = FALSE),
+  as.data.frame(ZBlayoutR2022, stringsAsFactors = FALSE, check.names = FALSE),
+  by = names(ZBlayoutR)[1]
+)
+
+# Replace NAs with 0
+if (ncol(ZBlayoutR) > 1) {
+  ZBlayoutR[-1] <- lapply(ZBlayoutR[-1], function(col) { col[is.na(col)] <- 0; col })
+}
 ```
 
 ### Kenya 
@@ -449,12 +499,15 @@ MMlayout2018 <- MMlayout2018[, c(ncol(MMlayout2018), 1:(ncol(MMlayout2018)-1))] 
 colnames(MMlayout2018)[1] <- "" # remove column name
 MMlayout2018[is.na(MMlayout2018)] <- 0 # change all NAs to 0
 MMlayout2018[] <- lapply(MMlayout2018, function(x) {if (is.character(x)) sub("^\\s+1$", "1", x) else x}) # clean spaces
+
+# Remove failed locations
+MMlayout2018 <- MMlayout2018[MMlayout2018[[1]] != "NB02", ]
 ```
 
 #### Ol Jogi - TO ADD
 
 ```{r}
-datasets <- c("")
+#datasets <- c("")
 
 
 ```
@@ -462,7 +515,7 @@ datasets <- c("")
 ### Save clean layout datasets
 
 ```{r}
-datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022","ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022", "ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022", "LKlayout2025", "MMlayout2018")
+datasets <- c("RRlayoutMIO2018", "RRlayoutRNP2018", "RRlayoutWMA2018", "RRlayoutRGI2019", "SNlayoutNMTL2020", "SNlayoutSKPE2021", "SNlayoutSKPW2021", "SNlayoutSLWN2021", "SNlayoutSMGN2021", "SNlayoutNKLC2022", "SNlayoutNMSK2022", "ZBlayoutLL", "ZBlayoutR", "LKlayout2025", "MMlayout2018")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
@@ -600,7 +653,6 @@ for (ds in datasets) {
 
 ```{r}
 # NOTE: These are processed separately as there are different issues for each file
-
 # LL2020 cleaning
 ZBdataLL2020 <- ZBdataLL2020 %>% rename(Species = Tags, DATE = Date, LOC_ID = Area) # Rename columns To = From
 ZBdataLL2020 <- ZBdataLL2020 %>% mutate(Species = recode(Species,
@@ -679,8 +731,7 @@ ZBdataLL2022 <- ZBdataLL2022 %>% mutate(
 ZBdataLL2022$DATE <- as.Date(ZBdataLL2022$DATE, format = "%d/%m/%y")
 
 
-                       # Count number of days with detections of each species per site
-
+# Count number of days with detections of each species per site
 datasets <- c("ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022")
 species <- c("Lion - Panthera leo", "cheetah", "Leopard - Panthera pardus", "Spotted Hyaena - Crocuta crocuta", "Wild Dog - Lycaon pictus", "Caracal - Caracal caracal", "Serval - Leptailurus serval", "African Civet - Civettictis civetta", "Honey Badger - Mellivora capensis", "African Wildcat - Felis lybica",  "Side-Striped Jackal - Canis adustus")
 
@@ -699,13 +750,17 @@ for (sp in species) {
   }
 }
 
-# Append year onto loc-IDs due to location inconsistencies
-ZBdataLL2020 <- ZBdataLL2020 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
-ZBdataLL2021 <- ZBdataLL2021 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
-ZBdataLL2022 <- ZBdataLL2022 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
+# Keep on matching columns
+ZBdataLL2020 <- ZBdataLL2020[, c("LOC_ID", "DATE", "Species")]
+ZBdataLL2021 <- ZBdataLL2021[, c("LOC_ID", "DATE", "Species")]
+ZBdataLL2022 <- ZBdataLL2022[, c("LOC_ID", "DATE", "Species")]
+ZBdataLL2020$LOC_ID   <- as.character(ZBdataLL2020$LOC_ID)
+ZBdataLL2020$Species <- as.character(ZBdataLL2020$Species)
+ZBdataLL2020$DATE <- as.Date(ZBdataLL2020$DATE, format = "%Y-%m-%d")
+ZBdataLL2021$LOC_ID   <- as.character(ZBdataLL2021$LOC_ID)
+
+# Merge datasets
+ZBdataLL <- bind_rows(ZBdataLL2020, ZBdataLL2021, ZBdataLL2022)
 ```
 
 #### Rufunsa
@@ -759,13 +814,16 @@ for (sp in species) {
   }
 }
 
-# Add year to location names due to inconsistencies
-ZBdataR2020 <- ZBdataR2020 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2020"))
-ZBdataR2021 <- ZBdataR2021 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2021"))
-ZBdataR2022 <- ZBdataR2022 %>%
-  mutate(LOC_ID = paste0(LOC_ID, "-2022"))
+# Keep on matching columns
+ZBdataR2020 <- ZBdataR2020[, c("LOC_ID", "DATE", "Species")]
+ZBdataR2021 <- ZBdataR2021[, c("LOC_ID", "DATE", "Species")]
+ZBdataR2022 <- ZBdataR2022[, c("LOC_ID", "DATE", "Species")]
+ZBdataR2020$LOC_ID   <- as.character(ZBdataR2020$LOC_ID)
+ZBdataR2021$LOC_ID   <- as.character(ZBdataR2021$LOC_ID)
+ZBdataR2022$LOC_ID   <- as.character(ZBdataR2022$LOC_ID)
+
+# Merge datasets
+ZBdataR <- bind_rows(ZBdataR2020, ZBdataR2021, ZBdataR2022)
 ```
 
 ### Kenya 
@@ -817,7 +875,7 @@ for (sp in species) {
 }
 ```
 
-#### Maasai Mara
+#### Maasai Mara ### CHECK
 
 ```{r}
 # Remove species not needed and set up main dataset to match
@@ -927,7 +985,7 @@ for (sp in species) {
 ### Match species names across datasets and remove unneccsary species data
 
 ```{r}
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022", "LKdata2025", "MMdata2018", "OJdata2022" )
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL", "ZBdataR", "LKdata2025", "MMdata2018", "OJdata2022" )
 
 # Create a named vector for recoding
 species_recode <- c(
@@ -984,7 +1042,7 @@ for (ds in datasets) {
 
 ```{r}
 # Save clean datasets
-datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL2020", "ZBdataLL2021", "ZBdataLL2022", "ZBdataR2020", "ZBdataR2021", "ZBdataR2022","LKdata2025", "MMdata2018", "OJdata2022")
+datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL", "ZBdataR", "LKdata2025", "MMdata2018", "OJdata2022")
 
 # Define output directory
 output_dir <- "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis"
