@@ -875,7 +875,7 @@ for (sp in species) {
 }
 ```
 
-#### Maasai Mara ### CHECK
+#### Maasai Mara 
 
 ```{r}
 # Remove species not needed and set up main dataset to match
@@ -890,6 +890,42 @@ keep_species <- c(
 
 MMdata2018 <- MMdata2018[MMdata2018$pred1_label %in% keep_species, ]
 
+# Make pivot table of confidence thresholds
+breaks <- c(0, 0.5, seq(0.6, 1, by = 0.1))
+labels <- c(
+  "0–0.5",
+  "0.5–0.6",
+  "0.6–0.7",
+  "0.7–0.8",
+  "0.8–0.9",
+  "0.9–1.0"
+)
+
+pivot_table <- MMdata2018 %>%
+  mutate(
+    prob_bin = cut(
+      pred1_prob,
+      breaks = breaks,
+      labels = labels,
+      include.lowest = TRUE,
+      right = FALSE
+    )
+  ) %>%
+  count(pred1_label, prob_bin) %>%
+  pivot_wider(
+    names_from = prob_bin,
+    values_from = n,
+    values_fill = 0
+  )
+
+pivot_table
+
+# Threshold by confidence value >0.8
+MMdata2018full <- MMdata2018
+MMdata2018 <- MMdata2018 %>%
+  filter(pred1_prob > 0.8) 
+
+# Tidy columns
 MMdata2018 <- MMdata2018[, c("img_id", "pred1_label", "location", "datetime", "date")] # remove unwanted columns
 
 colnames(MMdata2018) <- c("PHOTO", "Species", "LOC_ID", "DATETIME", "DATE") # rename
@@ -982,7 +1018,7 @@ for (sp in species) {
 ```
 
 
-### Match species names across datasets and remove unneccsary species data
+### Match species names across datasets and remove unneccesary species data
 
 ```{r}
 datasets <- c("RRdataMIO2018", "RRdataRNP2018", "RRdataWMA2018", "RRdataRGI2019", "SNdataNMTL2020", "SNdataSKPE2021", "SNdataSKPW2021", "SNdataSLWN2021", "SNdataSMGN2021", "SNdataNKLC2022", "SNdataNMSK2022", "ZBdataLL", "ZBdataR", "LKdata2025", "MMdata2018", "OJdata2022" )
@@ -1822,7 +1858,7 @@ spatial_covs <- as.data.frame(values)
 
 spatial_covs <- spatial_covs[, !names(spatial_covs) %in% c("ID.x", "ID.y", "ID")]
 
-write.csv(values, "spatial_covariates.csv", row.names=F)
+write.csv(values, "C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis/spatial_covariates.csv", row.names=F)
 ```
 
 ## Plot covariate graphs

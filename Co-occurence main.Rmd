@@ -122,8 +122,8 @@ for (ds in datasets) {
       pivot_wider(names_from = WEEK, values_from = effort)
     
     # Fieldseason covariate matrix: replace 1s with file name (minus "lay")
-    prefix <- sub("lay$", "", ds)
-    lay_fs <- weekly
+    prefix <- sub("lay$", "", ds) 
+    lay_fs <- weekly 
     lay_fs[,-1] <- lapply(lay_fs[,-1], function(col) ifelse(col == 1, prefix, NA))
     
     # Assign new objects back
@@ -134,11 +134,52 @@ for (ds in datasets) {
 }
 ```
 
+## Calculate the number of detections per survey area per site
+
+```{r}
+# List all files ending in "cap"
+files <- grep(pattern = "cap$", ls(), value = TRUE)
+
+ZBRcap <- ZBRcap %>% mutate(across(c(LOC_ID), as.character))
+ZBLLcap <- ZBLLcap %>% mutate(across(c(LOC_ID), as.character))
+
+# Create an empty list to store results
+results <- list()
+
+# Loop through each data frame in the list
+for (file_name in files) {
+  df <- get(file_name)
+  message("Processing: ", file_name)
+  message("Rows: ", nrow(df))
+  summary <- df |>
+    dplyr::distinct(Species, WEEK, LOC_ID) |>
+    dplyr::count(Species, name = "n_unique_week_loc")
+  message("Summary rows: ", nrow(summary))
+  summary$file <- file_name
+  results[[file_name]] <- summary
+}
+
+
+file_summary <- dplyr::bind_rows(results)
+
+# Convert to wide table
+file_summary_wide <- file_summary %>%
+  pivot_wider(
+    names_from = file,
+    values_from = n_unique_week_loc,
+    values_fill = 0  # fill missing species/file combos with 0
+  )
+
+file_summary_wide <- file_summary_wide %>%
+  dplyr::mutate(TOTAL = rowSums(dplyr::across(where(is.numeric))))
+```
+
+
 ## Create detection histories
 
 ```{r}
-#Prepare lists
-week_names <- grep("week$", ls(), value = TRUE) #detection files
+# Prepare lists
+week_names <- grep("week$", ls(), value = TRUE) # detection files
 cap_names <- grep("cap$", ls(), value = TRUE) # capture files
 site_list <- sort(unique(unlist(lapply(week_names, function(name) {
   get(name)$LOC_ID})))) #full list of sites
@@ -197,6 +238,13 @@ y_array <- y_array[species_index,,]
 #dimnames(y_array)[[3]] <- ordered_species
 ```
 
+## function for y array
+
+```{r}
+
+```
+
+
 ## Create spatial matrix (sites x coords)
 
 ```{r}
@@ -244,7 +292,65 @@ storage.mode(effort_matrix) <- "double"
 ## Create field season matrix (sites × weeks) 
 
 ```{r}
-fs_names <- grep("fs$", ls(), value = TRUE) # Identify all fieldseason dataset names
+fs_names <- setdiff(grep("fs$", ls(), value = TRUE), "lay_fs") # Identify all fieldseason dataset names
+
+# Add column year to values
+add_colname_to_cells_by_name <- function(nm) {
+  if (!exists(nm, envir = .GlobalEnv)) return(invisible(NULL))
+  mat <- get(nm, envir = .GlobalEnv)
+  # require a matrix/data.frame with colnames and at least 2 columns
+  if (is.null(dim(mat)) || is.null(colnames(mat)) || ncol(mat) < 2) {
+    assign(nm, mat, envir = .GlobalEnv)
+    return(invisible(NULL))
+  }
+  cols <- colnames(mat)[-1]   # ignore first column
+  nr <- nrow(mat)
+  for (col in cols) {
+    for (r in seq_len(nr)) {
+      base <- as.character(mat[r, col])        # single cell -> character
+      mat[r, col] <- paste0(base, "_", col)    # assign single cell
+    }
+  }
+  assign(nm, mat, envir = .GlobalEnv)
+  invisible(NULL)
+}
+
+lapply(fs_names, add_colname_to_cells_by_name)
+
+# reinstate NAs (may be a bit of a cicular way of doing this but i couldnt get the other ways to work)
+set_NA_cells_by_name <- function(nm) {
+  x <- get(nm, envir = .GlobalEnv)
+
+  # operate element-by-element
+  for (j in seq_len(ncol(x))) {
+    for (i in seq_len(nrow(x))) {
+      val <- x[i, j]
+      if (!is.na(val) && grepl("NA", as.character(val))) {
+        x[i, j] <- NA
+      }
+    }
+  }
+
+  assign(nm, x, envir = .GlobalEnv)
+}
+
+lapply(fs_names, set_NA_cells_by_name)
+
+# remove week from names
+remove_after_dash_by_name <- function(nm) {
+  x <- get(nm, envir = .GlobalEnv)
+  for (j in seq_len(ncol(x))) {
+    for (i in seq_len(nrow(x))) {
+      val <- x[i, j]
+      if (!is.na(val)) {
+        x[i, j] <- sub("-.*$", "", as.character(val))
+      }
+    }
+  }
+  assign(nm, x, envir = .GlobalEnv)
+}
+
+lapply(fs_names, remove_after_dash_by_name)
 
 # Pivot each to long form and stack them : LOC_ID | Week | fieldseason
 fs_long <- lapply(fs_names, function(name) {
@@ -272,6 +378,7 @@ rownames(fieldseason_matrix) <- fs_merged$LOC_ID
 storage.mode(fieldseason_matrix) <- "character"
 fieldseason_matrix[fieldseason_matrix == "NULL"] <- NA
 ```
+
 ## Fieldseason as a numeric
 
 ```{r}
@@ -292,12 +399,38 @@ numeric_matrix <- matrix(
 fieldseason_numeric_matrix <- as.data.frame(numeric_matrix)
 ```
 
+## Create Targeted v's grid matrix
+
+```{r}
+# Copy the matrix structure
+targetvgrid_matrix <- fieldseason_numeric_matrix
+
+# Get row names
+row_names <- rownames(fieldseason_numeric_matrix)
+
+# Define prefix group that should get 2s
+prefixes <- c("MN", "MT", "NB", "OMC")
+
+# Loop over rows
+for (i in seq_along(row_names)) {
+  row_name <- row_names[i]
+  # Check if row name starts with one of the target prefixes
+  if (any(startsWith(row_name, prefixes))) {
+    targetvgrid_matrix[i, !is.na(fieldseason_numeric_matrix[i, ])] <- 2
+  } else {
+    targetvgrid_matrix[i, !is.na(fieldseason_numeric_matrix[i, ])] <- 1
+  }
+}
+```
+
+
 ## Create landcover matrix for detection
 
 ```{r}
 # Read data
 setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
-spatial_covs <- read.csv("spatial_covariates.csv")
+spatial_covs <- read.csv("spatial_covariates - no OJ.csv", row.names=1)
+spatial_covs <- spatial_covs[order(rownames(spatial_covs)), ]
 
 # Recode to bigger groups 
 spatial_covs$land_cover_recoded <- ifelse(spatial_covs$land_cover %in% c(1,3,6,7,9,10), "unknown",
@@ -310,7 +443,7 @@ spatial_covs$land_cover_recoded <- ifelse(spatial_covs$land_cover %in% c(1,3,6,7
 loc_ids <- rownames(effort_matrix)
 
 # Lookup for recoded landcover per site
-landcover_lookup <- setNames(spatial_covs$land_cover_recoded, spatial_covs$LOC_ID)
+landcover_lookup <- setNames(spatial_covs$land_cover_recoded, rownames(spatial_covs))
 
 # Get landcover values per row
 landcover_values <- landcover_lookup[loc_ids]
@@ -330,11 +463,17 @@ for (i in seq_len(nrow(effort_matrix))) {
 }
 ```
 
-# Covaraite correlation matrix
+## Fix missing WDPA values in spatial_covs for sites that are just outside shapefiles
 
 ```{r}
-
+spatial_covs["KLKE_53", "WDPA"] <- 4
+spatial_covs["MN09",    "WDPA"] <- 6
+spatial_covs["NB06",    "WDPA"] <- 6
+spatial_covs["NB49",    "WDPA"] <- 6
+spatial_covs["WMA_01",  "WDPA"] <- 6
+spatial_covs["WMA_02",  "WDPA"] <- 6
 ```
+
 
 # Create occupancy data list
 
@@ -344,26 +483,18 @@ occ_data <- list(
   det.covs = list(
     effort = effort_matrix, 
     fieldseason = fieldseason_numeric_matrix,
-    landcover = landcover_matrix
+    landcover = landcover_matrix,
+    targeted = targetvgrid_matrix
   ),
   coords = coords,
   occ.covs = spatial_covs
 )
+
 ```
 
 # Univariate selection
 
-## Select detection probability covariates
-
-## Select between protected area covariates
-
-## Select between terrain covariates
-
-## Select between temperature covariates
-
-## Select between rainfall covariates
-
-# Run multivariate models
+## Run Null model
 
 ```{r}
 # Null model
@@ -381,8 +512,157 @@ null_model <- sfMsPGOcc(occ.formula = ~ 1,
                        n.burn = 5000,
                        n.thin = 5,
                        n.chains = 3)
+```
+
+
+## Select detection probability covariates
+
+```{r}
+det_model <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ effort  + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+```
+
+## Select between terrain covariates
+
+```{r}
+slope_model <- sfMsPGOcc(occ.formula = ~ scale(slope),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+rough_model <- sfMsPGOcc(occ.formula = ~ scale(rough_range),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+waicOcc(slope_model, rough_model)
+```
+
+## Select between temperature covariates
+
+```{r}
+temp_model <- sfMsPGOcc(occ.formula = ~ scale(temp),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+tempseas_model <- sfMsPGOcc(occ.formula = ~ scale(temp_seas),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+landtemp_model <- sfMsPGOcc(occ.formula = ~ scale(land_temp),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+waicOcc(temp_model, tempseas_model, landtemp_model)
+```
+
+## Select between rainfall covariates
+
+```{r}
+precip_model <- sfMsPGOcc(occ.formula = ~ scale(precip),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+precipseas_model <- sfMsPGOcc(occ.formula = ~ scale(precip_seas),
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 30,
+                       batch.length = 100,
+                       n.burn = 500,
+                       n.thin = 5,
+                       n.chains = 3)
+
+waicOcc(precip_model, precipseas_model)
+```
+
+
+# Run multivariate models
+
+```{r}
 # Control model
-det_model <- sfMsPGOcc(occ.formula = ~ scale(log_soil_moist),
+cont_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist),
                        det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
                        data = occ_data,
                        NNGP = TRUE,
@@ -397,25 +677,8 @@ det_model <- sfMsPGOcc(occ.formula = ~ scale(log_soil_moist),
                        n.thin = 5,
                        n.chains = 3)
 
-
-# Combined model - dont forget to scale continuous variables
-comb_model <- sfMsPGOcc(occ.formula = ~ closed_prop + scale(log_hum_pop) + scale(log_soil_moist),
-                       det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
-                       data = occ_data,
-                       NNGP = TRUE,
-                       n.neighbors = 10,
-                       n.factors = 3,                      
-                       verbose = TRUE,
-                       n.omp.threads = 6,
-                       n.report = 100,
-                       n.batch = 400,
-                       batch.length = 400,
-                       n.burn = 5000,
-                       n.thin = 5,
-                       n.chains = 3)
-
 # Habitat model
-hab_model <- sfMsPGOcc(occ.formula = ~ closed_prop + scale(log_soil_moist),
+hab_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + closed_prop + scale (rough_range),
                        det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
                        data = occ_data,
                        NNGP = TRUE,
@@ -430,7 +693,7 @@ hab_model <- sfMsPGOcc(occ.formula = ~ closed_prop + scale(log_soil_moist),
                        n.thin = 5,
                        n.chains = 3)
 # Human model
-hum_model <- sfMsPGOcc(occ.formula = ~ scale(log_hum_pop) + scale(log_soil_moist),
+hum_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + scale(log_hum_pop) + as.factor(WDPA),
                        det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
                        data = occ_data,
                        NNGP = TRUE,
@@ -445,17 +708,35 @@ hum_model <- sfMsPGOcc(occ.formula = ~ scale(log_hum_pop) + scale(log_soil_moist
                        n.thin = 5,
                        n.chains = 3)
 
+# Combined model 
+comb_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + closed_prop + scale (rough_range) + scale(log_hum_pop) + as.factor(WDPA),
+                       det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 400,
+                       batch.length = 400,
+                       n.burn = 5000,
+                       n.thin = 5,
+                       n.chains = 3)
+
+waicOcc(nulll_model, det_model, cont_model, hab_model, hum_model, comb_model)
 ```
 
 ## Posterior checks
 
 ```{r}
 # Trace plots for convergence
-plot(occ_model, 'beta', density = FALSE)
+plot(det_model, 'beta', density = FALSE)
 
 # Model validation --------------------------------------------------------
 # Perform a posterior predictive check to assess model fit.
-ppc.out <- ppcOcc(occ_model, fit.stat = 'freeman-tukey', group = 1)
+ppc.out <- ppcOcc(det_model, fit.stat = 'freeman-tukey', group = 1)
+
 # Calculate a Bayesian p-value as a simple measure of Goodness of Fit.
 # Bayesian p-values between 0.1 and 0.9 indicate adequate model fit.
 summary(ppc.out)
@@ -463,11 +744,11 @@ summary(ppc.out)
 # Model comparison --------------------------------------------------------
 # Compute Widely Applicable Information Criterion (WAIC)
 # Lower values indicate better model fit.
-waicOcc(hab_model, hum_model)
+waicOcc(det_model, M1, m2)
 
 # Posterior summaries -----------------------------------------------------
 # Concise summary of main parameter estimates
-summary(occ_model, level = 'both')
+summary(det_model, level = 'both')
 ```
 
 
@@ -550,13 +831,49 @@ for (i in seq_along(d)) {
 
 ```
 
-## Find additional sites in Maasai Mara
+## Finding missing sites
 
 ```{r}
+na_sites <- which(!complete.cases(occ_data$occ.covs))
 
-MM2018sp_only <- MM2018sp %>%
-  filter(!LOC_ID %in% MM2018lay[[1]])
+site_na_report <- lapply(na_sites, function(i) {
+  colnames(occ_data$occ.covs)[is.na(occ_data$occ.covs[i, ])]
+})
 
-#NB13, MT06, MT50
+names(site_na_report) <- rownames(occ_data$occ.covs)[na_sites]
+
+site_na_report
+```
+
+## Find missing det.covs
+
+```{r}
+y <- occ_data$y          # species x sites x visits (array) OR sites x visits (matrix)
+det.covs <- occ_data$det.covs
+observed_y <- apply(!is.na(y), c(2,3), any)
+
+cov_names <- names(det.covs)
+
+conflict_list <- lapply(cov_names, function(cn) {
+  cov_mat <- det.covs[[cn]]
+  
+  # Ensure shape matches y
+  if (!all(dim(cov_mat) == dim(observed_y))) {
+    stop(paste("Dimension mismatch for covariate:", cn))
+  }
+  
+  # Conflict = cov is NA AND y has real observation
+  conflicts <- is.na(cov_mat) & observed_y
+  
+  if (any(conflicts)) {
+    which(conflicts, arr.ind = TRUE)
+  } else {
+    NULL
+  }
+})
+
+names(conflict_list) <- cov_names
+conflict_list
+
 ```
 
