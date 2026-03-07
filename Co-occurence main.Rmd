@@ -97,7 +97,7 @@ for (ds in datasets) {
   if (grepl("cap$", ds)) { # Select cap files
     df_capture <- get(ds)
     df_capture <- df_capture %>%
-    mutate(DATE = as.Date(DATE, format = "%Y-%m-%d"), WEEK = format(DATE, "%Y-%U")) # Use DATE to add WEEK column and values
+    mutate(DATE = as.Date(DATE, format = "%Y-%m-%d"), WEEK = format(DATE, "%Y-%W")) # Use DATE to add WEEK column and values
     assign(ds, df_capture, envir = .GlobalEnv) # Overwrite the original
   }
   # Process layout datasets: create weekly status, effort, and fieldseason matrix
@@ -106,7 +106,7 @@ for (ds in datasets) {
       pivot_longer(-LOC_ID, names_to = "date", values_to = "status") %>%
       mutate(
         date = as.Date(date, format = "%Y-%m-%d"),
-        WEEK = format(date, "%Y-%U")
+        WEEK = format(date, "%Y-%W")
       ) # Pivot to long
     
     # Weekly operational (1 if any day active)
@@ -149,12 +149,9 @@ results <- list()
 # Loop through each data frame in the list
 for (file_name in files) {
   df <- get(file_name)
-  message("Processing: ", file_name)
-  message("Rows: ", nrow(df))
   summary <- df |>
     dplyr::distinct(Species, WEEK, LOC_ID) |>
     dplyr::count(Species, name = "n_unique_week_loc")
-  message("Summary rows: ", nrow(summary))
   summary$file <- file_name
   results[[file_name]] <- summary
 }
@@ -174,7 +171,6 @@ file_summary_wide <- file_summary_wide %>%
   dplyr::mutate(TOTAL = rowSums(dplyr::across(where(is.numeric))))
 ```
 
-
 ## Create detection histories
 
 ```{r}
@@ -189,61 +185,121 @@ species_list <- sort(unique(unlist(lapply(cap_names, function(name) {
   unique(get(name)$Species)})))) #full list of species
 
 # Remove low detection species - edit as necessary
-#species_list <- setdiff(species_list, "Cheetah")
+# species_list <- setdiff(species_list, "Cheetah")
 
-# Create empty array with lists
-y_array <- array(NA, dim = c(length(species_list), length(site_list), length(week_list)),
+# Loop through cap files and merge
+for (name in cap_names) {
+  cap_data <- get(name)
+  # Subset only the desired columns
+  cap_data <- cap_data[, c("LOC_ID", "DATE", "Species", "WEEK")]
+  # Overwrite the original data frame in the global environment
+  assign(name, cap_data)
+}
+merged_caps <- dplyr::bind_rows(mget(cap_names))
+
+## Make one big operational matrices
+long_weeks <- lapply(week_names, function(name) {
+  df <- get(name)
+  df$LOC_ID <- as.character(df$LOC_ID)
+  df_long <- pivot_longer(df, cols = -LOC_ID, names_to = "week", values_to = "op_status")
+  return(df_long)
+}) %>%
+  bind_rows()
+
+wide_weeks <- tidyr::pivot_wider(
+  long_weeks,
+  names_from = week,
+  values_from = op_status
+)
+
+wide_weeks <- arrange(wide_weeks, LOC_ID)
+week_cols <- setdiff(names(wide_weeks), "LOC_ID")
+wide_weeks <- wide_weeks[, c("LOC_ID", sort(week_cols))]
+
+wide_weeks[ , -1] <- lapply(wide_weeks[ , -1], function(col) {
+  col <- ifelse(col == 0, NA, col)  # 0 → NA
+  col <- ifelse(col == 1, 0, col)   # 1 → 0
+  return(col)
+})
+
+# create y-array
+site_list <- wide_weeks$LOC_ID
+week_list <- setdiff(colnames(wide_weeks), "LOC_ID")
+
+n_species <- length(species_list)
+n_sites <- length(site_list)
+n_weeks <- length(week_list)
+
+y_array <- array(NA, dim = c(n_species, n_sites, n_weeks),
                  dimnames = list(Species = species_list, Site = site_list, Week = week_list))
 
-# Loop through each pair of cap and week datasets to fill y_array
-for (i in seq_along(cap_names)) {
-  cap_data <- get(cap_names[i])
-  week_data <- get(week_names[i])
-  for (w in seq_along(week_list)) {
-    week_str <- week_list[w]
-    # Subset capture data for current week
-    cap_sub <- cap_data %>%
-      filter(WEEK == week_str)
-    # Subset layout data for current week
-    if (!week_str %in% colnames(week_data)) next
-    layout_sub <- week_data %>%
-      select(LOC_ID, all_of(week_str)) %>%
-      rename(op_status = 2)
-    for (s in seq_along(site_list)) {
-      site <- site_list[s]
-      # Get operational status
-      site_active <- layout_sub$op_status[layout_sub$LOC_ID == site]
-      site_active <- ifelse(length(site_active) == 0, NA, site_active[1])
-      for (sp in seq_along(species_list)) {
-        species <- species_list[sp]
-        if (!is.na(site_active) && site_active == 1) {
-          detected <- any(cap_sub$LOC_ID == site & cap_sub$Species == species)
-          y_array[sp, s, w] <- ifelse(detected, 1, 0)
-        } else if (is.na(y_array[sp, s, w])) {
-          y_array[sp, s, w] <- NA
-        }
-      }
+week_matrix <- as.matrix(wide_weeks[ , week_list])
+
+for (sp in seq_along(species_list)) {
+  y_array[sp, , ] <- week_matrix
+}
+
+# populate y-array with species detections
+na_attempts <- data.frame(Species = character(),
+                          LOC_ID = character(),
+                          WEEK = character(),
+                          stringsAsFactors = FALSE)
+
+for (i in seq_len(nrow(merged_caps))) {
+  row <- merged_caps[i, ]
+  Species <- as.character(row$Species)
+  Site <- as.character(row$LOC_ID)
+  Week <- as.character(row$WEEK)
+
+  # Check if dimensions exist in y_array
+  valid_species <- Species %in% dimnames(y_array)[[1]]
+  valid_site    <- Site %in% dimnames(y_array)[[2]]
+  valid_week    <- Week %in% dimnames(y_array)[[3]]
+  if (valid_species && valid_site && valid_week) {
+    # Safe to access the array
+    current_value <- y_array[Species, Site, Week]
+    if (is.na(current_value)) {
+      # Exists but is NA — log it
+      na_attempts <- rbind(na_attempts, data.frame(
+        Species = Species,
+        LOC_ID = Site,
+        WEEK = Week,
+        stringsAsFactors = FALSE
+      ))
+    } else {
+      # Exists and is not NA — mark detection
+      y_array[Species, Site, Week] <- 1
     }
+  } else {
+    # Combination doesn't exist in y_array — log it
+    na_attempts <- rbind(na_attempts, data.frame(
+      Species = Species,
+      LOC_ID = Site,
+      WEEK = Week,
+      stringsAsFactors = FALSE
+    ))
   }
 }
+
+# unique combinations in na_attempts
+na_attempts <- na_attempts %>%
+  distinct(Species, LOC_ID, WEEK, .keep_all = TRUE)
+
+
+
 
 # Calculate the number of total detections by week for each species
 detection_totals <- apply(y_array, 1, function(x) sum(x, na.rm = TRUE))
 detection_totals
 
-# Reorder array
-ordered_species <- names(sort(detection_totals, decreasing = TRUE))
-species_index <- match(ordered_species, dimnames(y_array)[[1]])
-y_array <- y_array[species_index,,]
-#dimnames(y_array)[[3]] <- ordered_species
+# Reorder array so that common species are first (better for multi species occupancy modelling)
+#ordered_species <- names(sort(detection_totals, decreasing = TRUE))
+#species_index <- match(ordered_species, dimnames(y_array)[[1]])
+#y_array <- y_array[species_index,,]
+
+# Temporarily remove Spotted hyaena from y_array
+y_array <- y_array[dimnames(y_array)[[1]] != "Spotted hyaena", , , drop = FALSE]
 ```
-
-## function for y array
-
-```{r}
-
-```
-
 
 ## Create spatial matrix (sites x coords)
 
@@ -474,7 +530,6 @@ spatial_covs["WMA_01",  "WDPA"] <- 6
 spatial_covs["WMA_02",  "WDPA"] <- 6
 ```
 
-
 # Create occupancy data list
 
 ```{r}
@@ -490,6 +545,7 @@ occ_data <- list(
   occ.covs = spatial_covs
 )
 
+rm(list = setdiff(ls(envir = .GlobalEnv), "occ_data"), envir = .GlobalEnv)
 ```
 
 # Univariate selection
@@ -507,19 +563,22 @@ null_model <- sfMsPGOcc(occ.formula = ~ 1,
                        verbose = TRUE,
                        n.omp.threads = 6,
                        n.report = 100,
-                       n.batch = 400,
+                       n.batch = 450,
                        batch.length = 400,
-                       n.burn = 5000,
-                       n.thin = 5,
+                       n.burn = 60000,
+                       n.thin = 4,
                        n.chains = 3)
-```
 
+plot(null_model, 'beta', density = FALSE)
+summary(null_model)
+```
 
 ## Select detection probability covariates
 
 ```{r}
-det_model <- sfMsPGOcc(occ.formula = ~ 1,
-                       det.formula = ~ effort  + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
+# Full model
+det_model1 <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ effort + as.factor(landcover) + as.factor(targeted) + (1|fieldseason), 
                        data = occ_data,
                        NNGP = TRUE,
                        n.neighbors = 10,
@@ -527,11 +586,45 @@ det_model <- sfMsPGOcc(occ.formula = ~ 1,
                        verbose = TRUE,
                        n.omp.threads = 6,
                        n.report = 100,
-                       n.batch = 30,
-                       batch.length = 100,
-                       n.burn = 500,
+                       n.batch = 400,
+                       batch.length = 400,
+                       n.burn = 5000,
                        n.thin = 5,
                        n.chains = 3)
+
+# Landcover
+det_model2 <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ effort  + as.factor(landcover) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 100,
+                       n.batch = 400,
+                       batch.length = 400,
+                       n.burn = 5000,
+                       n.thin = 5,
+                       n.chains = 3)
+
+# Targeted v's grid
+det_model3 <- sfMsPGOcc(occ.formula = ~ 1,
+                       det.formula = ~ effort  + as.factor(targeted) + (1|fieldseason), 
+                       data = occ_data,
+                       NNGP = TRUE,
+                       n.neighbors = 10,
+                       n.factors = 3,                      
+                       verbose = TRUE,
+                       n.omp.threads = 6,
+                       n.report = 120,
+                       n.batch = 400,
+                       batch.length = 400,
+                       n.burn = 5000,
+                       n.thin = 5,
+                       n.chains = 3)
+
+waicOcc(null_model, det_model1, det_model2, det_model3)
 ```
 
 ## Select between terrain covariates
@@ -678,8 +771,8 @@ cont_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay
                        n.chains = 3)
 
 # Habitat model
-hab_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + closed_prop + scale (rough_range),
-                       det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
+hab_model <- sfMsPGOcc(occ.formula = ~ closed_prop, #scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + scale (rough_range)
+                       det.formula = ~ 1,# effort + as.factor(landcover) + (1|fieldseason),
                        data = occ_data,
                        NNGP = TRUE,
                        n.neighbors = 10,
@@ -687,11 +780,13 @@ hab_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay)
                        verbose = TRUE,
                        n.omp.threads = 6,
                        n.report = 100,
-                       n.batch = 400,
+                       n.batch = 200,
                        batch.length = 400,
                        n.burn = 5000,
                        n.thin = 5,
                        n.chains = 3)
+
+
 # Human model
 hum_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay) + scale(water_dist) + scale(log_hum_pop) + as.factor(WDPA),
                        det.formula = ~ effort + as.factor(landcover) + (1|fieldseason),
@@ -724,7 +819,7 @@ comb_model <- sfMsPGOcc(occ.formula = ~ scale(temp) + scale(precip) + scale(clay
                        n.thin = 5,
                        n.chains = 3)
 
-waicOcc(nulll_model, det_model, cont_model, hab_model, hum_model, comb_model)
+waicOcc(null_model, det_model, cont_model, hab_model, hum_model, comb_model)
 ```
 
 ## Posterior checks

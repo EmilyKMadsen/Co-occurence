@@ -426,6 +426,18 @@ names(ZBlayoutLL2020)[1] <- "LOC"
 names(ZBlayoutLL2021)[1] <- "LOC"
 names(ZBlayoutLL2022)[1] <- "LOC"
 
+# Merge multi-cameras into sites
+layout_names <- c("ZBlayoutLL2020", "ZBlayoutLL2021", "ZBlayoutLL2022")
+
+for (name in layout_names) {
+  df <- get(name)
+  df_merged <- df %>%
+    group_by(LOC) %>%
+    summarise(across(everything(), ~ if (all(is.na(.))) NA else 1), .groups = "drop")
+  assign(name, df_merged)  # overwrite original data frame
+}
+
+# Join years
 ZBlayoutLL <- full_join(
   as.data.frame(ZBlayoutLL2020, stringsAsFactors = FALSE, check.names = FALSE),
   as.data.frame(ZBlayoutLL2021, stringsAsFactors = FALSE, check.names = FALSE),
@@ -451,6 +463,18 @@ names(ZBlayoutR2020)[1] <- "LOC"
 names(ZBlayoutR2021)[1] <- "LOC"
 names(ZBlayoutR2022)[1] <- "LOC"
 
+# Merge multi-cameras into sites
+layout_names <- c("ZBlayoutR2020",  "ZBlayoutR2021", "ZBlayoutR2022")
+
+for (name in layout_names) {
+  df <- get(name)
+  df_merged <- df %>%
+    group_by(LOC) %>%
+    summarise(across(everything(), ~ if (all(is.na(.))) NA else 1), .groups = "drop")
+  assign(name, df_merged)  # overwrite original data frame
+}
+
+# Join years
 ZBlayoutR <- full_join(
   as.data.frame(ZBlayoutR2020, stringsAsFactors = FALSE, check.names = FALSE),
   as.data.frame(ZBlayoutR2021, stringsAsFactors = FALSE, check.names = FALSE),
@@ -645,6 +669,17 @@ for (ds in datasets) {
     filter(as.numeric(value) == 1) # Pivot longer and filter for presence == 1
   assign(ds, df, envir = .GlobalEnv)
 }
+
+# Shift pre-midday detentions to previous day to line up with WEEK occurence lengths as layout is recorded midday to midday
+for (ds in datasets) {
+  df <- get(ds)
+  time_vals <- as.POSIXct(df$TIME, format = "%H:%M:%S", tz = "UTC")   # Convert TIME to proper time format if it's not already
+  is_before_noon <- format(time_vals, "%H:%M:%S") < "12:00:00" # Identify rows where time is before 12:00 (midday)
+  df$DATE <- as.Date(df$DATE) # Convert Date to proper Date object if needed
+  df$DATE[is_before_noon] <- df$DATE[is_before_noon] - 1 # Subtract one day for rows before noon
+  assign(ds, df)  # Save the updated data frame back into the list
+}
+
 ```
  
 ### Zambia
@@ -1960,7 +1995,6 @@ corr_plot <- corrplot(
 # Not required
 
 
-## Soil moisture
 
 ### Prepare raster ~ skip if reimporting
 
