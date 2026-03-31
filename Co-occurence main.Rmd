@@ -21,7 +21,7 @@ library(spOccupancy)
 
 ```{r}
 #read data
-setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/User/Documents/For analysis")
 
 # List all CSV files in the working directory
 files <- list.files(pattern = "\\.csv$")
@@ -484,7 +484,7 @@ for (i in seq_along(row_names)) {
 
 ```{r}
 # Read data
-setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
+setwd("C:/Users/User/Documents/For analysis")
 spatial_covs <- read.csv("spatial_covariates - no OJ.csv", row.names=1)
 spatial_covs <- spatial_covs[order(rownames(spatial_covs)), ]
 
@@ -563,15 +563,15 @@ null_model <- sfMsPGOcc(occ.formula = ~ 1,
                        verbose = TRUE,
                        n.omp.threads = 6,
                        n.report = 100,
-                       n.batch = 450,
-                       batch.length = 400,
+                       n.batch = 900,
+                       batch.length = 600,
                        n.burn = 60000,
                        n.thin = 4,
                        n.chains = 3)
 
 plot(null_model, 'beta', density = FALSE)
 summary(null_model)
-```
+```         
 
 ## Select detection probability covariates
 
