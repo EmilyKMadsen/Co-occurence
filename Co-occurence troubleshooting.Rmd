@@ -1,0 +1,136 @@
+---
+title: "Co-occurence troubleshooting"
+author: "Emily"
+date: "2026-03-26"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+# Trouble shooting
+
+## Detection history issue - run per site to find where missing species data is
+
+```{r}
+# Prepare lists
+week_names <- grep("SNNKLC2022week|SNNMSK2022week|SNNMTL2020week|SNSKPE2021week|SNSKPW2021week|SNSLWN2021week|SNSMGN2021week", ls(), value = TRUE) #detection files
+cap_names <- grep("SNNKLC2022cap|SNNMSK2022cap|SNNMTL2020cap|SNSKPE2021cap|SNSKPW2021cap|SNSLWN2021cap|SNSMGN2021cap", ls(), value = TRUE) # capture files
+site_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  get(name)$LOC_ID
+})))) #full list of sites
+week_list <- sort(unique(unlist(lapply(week_names, function(name) {
+  colnames(get(name))[-1]  # Exclude LOC_ID column
+})))) #full list of weeks
+species_list <- sort(unique(unlist(lapply(cap_names, function(name) {
+  unique(get(name)$Species)
+})))) #full list of species
+
+
+# Initialize empty array
+y_array <- array(NA, dim = c(length(species_list), length(site_list), length(week_list)),
+                 dimnames = list(Species = species_list, Site = site_list, Week = week_list))
+
+# Fill the array from all datasets
+# Loop through each pair of cap and week datasets
+for (i in seq_along(cap_names)) {
+  cap_data <- get(cap_names[i])
+  week_data <- get(week_names[i])
+
+  for (w in seq_along(week_list)) {
+    week_str <- week_list[w]
+    # Subset capture data for current week
+    cap_sub <- cap_data %>%
+      filter(WEEK == week_str)
+    # Subset layout data for current week
+    if (!week_str %in% colnames(week_data)) next
+    layout_sub <- week_data %>%
+      select(LOC_ID, all_of(week_str)) %>%
+      rename(op_status = 2)
+    for (s in seq_along(site_list)) {
+      site <- site_list[s]
+      # Get operational status
+      site_active <- layout_sub$op_status[layout_sub$LOC_ID == site]
+      site_active <- ifelse(length(site_active) == 0, NA, site_active[1])
+      for (sp in seq_along(species_list)) {
+        species <- species_list[sp]
+        if (!is.na(site_active) && site_active == 1) {
+          detected <- any(cap_sub$LOC_ID == site & cap_sub$Species == species)
+          y_array[sp, s, w] <- ifelse(detected, 1, 0)
+        } else if (is.na(y_array[sp, s, w])) {
+          y_array[sp, s, w] <- NA
+        }
+      }
+    }
+  }
+}
+
+# Count detections
+detection_totals <- apply(y_array, 1, function(x) sum(x, na.rm = TRUE))
+detection_totals
+```
+
+## Error with some sites having empty detection histories
+
+```{r}
+d <- dim(y_array)
+for (i in seq_along(d)) {
+  cnt <- apply(y_array, i, function(slice) sum(!is.na(slice)))
+  cat("\n--- Dimension", i, "(length =", d[i], ") ---\n")
+  cat("slices with ANY non-NA:", sum(cnt > 0), "of", length(cnt), "\n")
+  cat("first 20 counts:"); print(head(cnt, 20))
+}
+
+
+```
+
+## Finding missing sites
+
+```{r}
+na_sites <- which(!complete.cases(occ_data$occ.covs))
+
+site_na_report <- lapply(na_sites, function(i) {
+  colnames(occ_data$occ.covs)[is.na(occ_data$occ.covs[i, ])]
+})
+
+names(site_na_report) <- rownames(occ_data$occ.covs)[na_sites]
+
+site_na_report
+```
+
+## Find missing det.covs
+
+```{r}
+y <- occ_data$y          # species x sites x visits (array) OR sites x visits (matrix)
+det.covs <- occ_data$det.covs
+observed_y <- apply(!is.na(y), c(2,3), any)
+
+cov_names <- names(det.covs)
+
+conflict_list <- lapply(cov_names, function(cn) {
+  cov_mat <- det.covs[[cn]]
+  
+  # Ensure shape matches y
+  if (!all(dim(cov_mat) == dim(observed_y))) {
+    stop(paste("Dimension mismatch for covariate:", cn))
+  }
+  
+  # Conflict = cov is NA AND y has real observation
+  conflicts <- is.na(cov_mat) & observed_y
+  
+  if (any(conflicts)) {
+    which(conflicts, arr.ind = TRUE)
+  } else {
+    NULL
+  }
+})
+
+names(conflict_list) <- cov_names
+conflict_list
+
+```
+

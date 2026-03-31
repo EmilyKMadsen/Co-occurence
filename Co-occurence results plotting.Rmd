@@ -1,0 +1,561 @@
+---
+title: "Co-occurence results plotting"
+author: "Emily"
+date: "2026-03-26"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(spOccupancy)
+library(corrplot)
+library(ggplot2)
+```
+
+## Reload top model for further analysis
+
+```{r}
+top_model <- readRDS("top_model.rds")
+```
+
+## Posterior checks
+
+```{r}
+# Trace plots for convergence
+plot(top_model, 'beta', density = FALSE)
+
+# Model validation --------------------------------------------------------
+# Perform a posterior predictive check to assess model fit.
+ppc.out <- ppcOcc(top_model, fit.stat = 'freeman-tukey', group = 1)
+
+# Posterior summaries -----------------------------------------------------
+# Concise summary of main parameter estimates
+summary(top_model, level = 'both')
+```
+
+# Community occurence plots
+
+## Closed prop
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_closed <- top_model$beta.comm.samples[, "closed_prop"]
+
+# Create gradient
+closed_seq <- seq(
+  min(occ_data$occ.covs$closed_prop, na.rm = TRUE),
+  max(occ_data$occ.covs$closed_prop, na.rm = TRUE),
+  length.out = 100
+)
+
+n.samp <- length(beta0)
+n.x <- length(closed_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_closed * closed_seq[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+# Combine into dataframe
+df_closed <- data.frame(
+  closed_prop = closed_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Create plot
+p_closed <- ggplot(df_closed, aes(x = closed_prop, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Proportion of closed habitat",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Terrain
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_slope <- top_model$beta.comm.samples[, "scale(slope)"]
+
+# Create gradient on ORIGINAL scale
+slope_seq <- seq(
+  min(occ_data$occ.covs$slope, na.rm = TRUE),
+  max(occ_data$occ.covs$slope, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale to match model
+slope_scaled <- (slope_seq - mean(occ_data$occ.covs$slope, na.rm = TRUE)) /
+                sd(occ_data$occ.covs$slope, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(slope_seq)
+
+# Compute response
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_slope * slope_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+# Combine into dataframe
+df_slope <- data.frame(
+  slope = slope_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Create plot
+p_slope <- ggplot(df_slope, aes(x = slope, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Slope",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Human pop
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_hum <- top_model$beta.comm.samples[, "scale(log_hum_pop)"]
+
+# Create gradient on ORIGINAL scale
+hum_seq <- seq(
+  min(occ_data$occ.covs$log_hum_pop, na.rm = TRUE),
+  max(occ_data$occ.covs$log_hum_pop, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale using original data (to match model)
+hum_scaled <- (hum_seq - mean(occ_data$occ.covs$log_hum_pop, na.rm = TRUE)) /
+              sd(occ_data$occ.covs$log_hum_pop, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(hum_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_hum * hum_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+# Combine into dataframe
+df_hum <- data.frame(
+  log_hum_pop = hum_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Create plot
+p_hum <- ggplot(df_hum, aes(x = log_hum_pop, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Log human population density",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## WDPA
+
+```{r}
+# Extract posterior samples
+beta <- top_model$beta.comm.samples
+
+# Get WDPA levels
+wdpa_vals <- sort(unique(occ_data$occ.covs$WDPA))
+wdpa_vals <- as.character(wdpa_vals)
+
+# Identify WDPA coefficient columns
+wdpa_cols <- grep("as.factor\\(WDPA\\)", colnames(beta), value = TRUE)
+
+# Intercept
+beta0 <- beta[, "(Intercept)"]
+
+# Storage
+n.samp <- nrow(beta)
+n.wdpa <- length(wdpa_vals)
+
+psi <- matrix(NA, nrow = n.wdpa, ncol = n.samp)
+
+# Loop over WDPA levels
+for (i in seq_along(wdpa_vals)) {
+  level <- wdpa_vals[i]
+  # baseline = intercept
+  eta <- beta0
+  # add effect if not reference level
+  col_name <- paste0("as.factor(WDPA)", level)
+  if (col_name %in% colnames(beta)) {
+    eta <- eta + beta[, col_name]
+  }
+  psi[i, ] <- 1 / (1 + exp(-eta))
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+df_wdpa <- data.frame(
+  WDPA = factor(wdpa_vals),
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Create plot
+p_wdpa <- ggplot(df_wdpa, aes(x = WDPA, y = mean)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.2) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "WDPA category",
+    y = "Mean community occupancy probability"
+  ) +
+  theme_minimal()
+```
+
+## Rainfall
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_precip <- top_model$beta.comm.samples[, "scale(precip)"]
+
+# Create gradient on ORIGINAL scale
+precip_seq <- seq(
+  min(occ_data$occ.covs$precip, na.rm = TRUE),
+  max(occ_data$occ.covs$precip, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale using original data (to match model)
+precip_scaled <- (precip_seq - mean(occ_data$occ.covs$precip, na.rm = TRUE)) /
+                 sd(occ_data$occ.covs$precip, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(precip_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_precip * precip_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+df_precip <- data.frame(
+  precip = precip_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Create plot
+p_precip <- ggplot(df_precip, aes(x = precip, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Precipitation",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Clay
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_clay <- top_model$beta.comm.samples[, "scale(clay)"]
+
+# Create gradient on ORIGINAL scale
+clay_seq <- seq(
+  min(occ_data$occ.covs$clay, na.rm = TRUE),
+  max(occ_data$occ.covs$clay, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale using original data (to match model)
+clay_scaled <- (clay_seq - mean(occ_data$occ.covs$clay, na.rm = TRUE)) /
+               sd(occ_data$occ.covs$clay, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(clay_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_clay * clay_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+df_clay <- data.frame(
+  clay = clay_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Plot
+p_clay <- ggplot(df_clay, aes(x = clay, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Clay content",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Water Distance
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_water <- top_model$beta.comm.samples[, "scale(water_dist)"]
+
+# Create gradient on ORIGINAL scale
+water_seq <- seq(
+  min(occ_data$occ.covs$water_dist, na.rm = TRUE),
+  max(occ_data$occ.covs$water_dist, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale using original data (to match model)
+water_scaled <- (water_seq - mean(occ_data$occ.covs$water_dist, na.rm = TRUE)) /
+                sd(occ_data$occ.covs$water_dist, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(water_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_water * water_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+df_water <- data.frame(
+  water_dist = water_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+) 
+
+# Plot
+p_water <- ggplot(df_water, aes(x = water_dist, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Distance to water",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Temperature
+
+```{r}
+# Extract posterior samples
+beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
+beta_temp <- top_model$beta.comm.samples[, "scale(temp_seas)"]
+
+# Create gradient on ORIGINAL scale
+temp_seq <- seq(
+  min(occ_data$occ.covs$temp_seas, na.rm = TRUE),
+  max(occ_data$occ.covs$temp_seas, na.rm = TRUE),
+  length.out = 100
+)
+
+# Scale using original data (to match model)
+temp_scaled <- (temp_seq - mean(occ_data$occ.covs$temp_seas, na.rm = TRUE)) /
+               sd(occ_data$occ.covs$temp_seas, na.rm = TRUE)
+
+n.samp <- length(beta0)
+n.x <- length(temp_seq)
+
+# Compute response curve
+psi <- matrix(NA, nrow = n.x, ncol = n.samp)
+
+for (i in 1:n.x) {
+  eta <- beta0 + beta_temp * temp_scaled[i]
+  psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
+}
+
+# Summarise posterior
+psi.mean <- apply(psi, 1, mean)
+psi.low  <- apply(psi, 1, quantile, 0.025)
+psi.high <- apply(psi, 1, quantile, 0.975)
+
+df_temp <- data.frame(
+  temp_seas = temp_seq,
+  mean = psi.mean,
+  low = psi.low,
+  high = psi.high
+)
+
+# Plot (x-axis on original scale)
+p_temp <- ggplot(df_temp, aes(x = temp_seas, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    x = "Temperature seasonality",
+    y = NULL
+  ) +
+  theme_minimal()
+```
+
+## Put plots all together
+
+```{r}
+library(patchwork)
+
+(p_closed + p_slope + p_hum +
+ p_wdpa + p_temp + p_precip +
+ p_clay + p_water) +
+  plot_layout(ncol = 3) &
+  theme(
+    axis.title.y = element_text(size = 10),
+    axis.title.x = element_text(size = 10)
+  )
+```
+
+# Species association plots
+
+## Residual correlation matrix
+
+```{r}
+library(corrplot)
+
+lam <- as.matrix(top_model$lambda.samples)
+
+n.samp <- nrow(lam)
+n.sp <- length(dimnames(top_model$y)[[1]])
+sp.names <- dimnames(top_model$y)[[1]]
+
+# infer number of factors
+n.factors <- length(unique(as.integer(sub("^.*-", "", colnames(lam)))))
+
+corr.sum <- matrix(0, n.sp, n.sp)
+
+for (s in 1:n.samp) {
+  L <- matrix(lam[s, ], nrow = n.sp, ncol = n.factors, byrow = TRUE)
+  Sigma <- L %*% t(L)
+  sd.vec <- sqrt(diag(Sigma))
+  Corr <- Sigma / (sd.vec %o% sd.vec)
+  corr.sum <- corr.sum + Corr
+}
+
+corr.mean <- corr.sum / n.samp
+diag(corr.mean) <- 1
+rownames(corr.mean) <- sp.names
+colnames(corr.mean) <- sp.names
+
+corrplot(
+  corr.mean,
+  method = "color",
+  type = "lower",
+  diag = FALSE,
+  addCoef.col = "black",
+  number.cex = 0.6,
+  tl.col = "black",
+  col.lim = c(-1, 1)
+)
+```
+
+## Co-occurence plot
+
+```{r}
+cooc.sum <- matrix(0, n.sp, n.sp)
+
+for (s in 1:n.samp) {
+  z_s <- matrix(z[s, , ], nrow = n.sp, ncol = n.site)
+  # joint occurrence across sites
+  cooc <- tcrossprod(z_s) / n.site
+  cooc.sum <- cooc.sum + cooc
+}
+
+cooc.mean <- cooc.sum / n.samp
+
+rownames(cooc.mean) <- sp.names
+colnames(cooc.mean) <- sp.names
+
+corrplot(
+  cooc.mean,
+  is.corr = FALSE,
+  method = "color",
+  type = "lower",
+  diag = FALSE,
+  addCoef.col = "black",
+  number.cex = 0.6,
+  tl.col = "black",
+  title = "Joint occupancy probability"
+)
+```
+
+
