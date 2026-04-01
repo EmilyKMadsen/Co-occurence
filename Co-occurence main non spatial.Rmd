@@ -21,7 +21,7 @@ library(spOccupancy)
 
 ```{r}
 #read data
-setwd("C:/Users/User/Documents/For analysis")
+setwd("C:/Users/lady7240/OneDrive - Nexus365/Documents/3. Thesis/Chapter 3 - Co-occcurence/Data/For analysis")
 
 # List all CSV files in the working directory
 files <- list.files(pattern = "\\.csv$")
@@ -469,7 +469,6 @@ for (i in seq_along(row_names)) {
 }
 ```
 
-
 ## Create landcover matrix for detection
 
 ```{r}
@@ -524,7 +523,6 @@ spatial_covs["WMA_02",  "WDPA"] <- 6
 spatial_covs$site_id <- as.numeric(as.factor(spatial_covs$site))
 ```
 
-
 # Create occupancy data list
 
 ```{r}
@@ -541,6 +539,7 @@ occ_data <- list(
 )
 
 rm(list = setdiff(ls(envir = .GlobalEnv), "occ_data"), envir = .GlobalEnv)
+saveRDS(occ_data, file = "occ_data.rds")
 ```
 
 # Univariate selection

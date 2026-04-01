@@ -17,12 +17,15 @@ library(lubridate)
 library(spOccupancy)
 library(corrplot)
 library(ggplot2)
+library(viridis)
+library(patchwork)
 ```
 
 ## Reload top model for further analysis
 
 ```{r}
 top_model <- readRDS("top_model.rds")
+occ_data <- readRDS("occ_data.rds")
 ```
 
 ## Posterior checks
@@ -33,7 +36,8 @@ plot(top_model, 'beta', density = FALSE)
 
 # Model validation --------------------------------------------------------
 # Perform a posterior predictive check to assess model fit.
-ppc.out <- ppcOcc(top_model, fit.stat = 'freeman-tukey', group = 1)
+ppc.out <- ppcOcc(top_model, fit.stat = "chi-squared", group = 1)
+summary(ppc.out)
 
 # Posterior summaries -----------------------------------------------------
 # Concise summary of main parameter estimates
@@ -49,19 +53,17 @@ summary(top_model, level = 'both')
 beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
 beta_closed <- top_model$beta.comm.samples[, "closed_prop"]
 
-# Create gradient
+# Create closed prop values to predict from
 closed_seq <- seq(
   min(occ_data$occ.covs$closed_prop, na.rm = TRUE),
   max(occ_data$occ.covs$closed_prop, na.rm = TRUE),
-  length.out = 100
-)
+  length.out = 100)
 
 n.samp <- length(beta0)
 n.x <- length(closed_seq)
 
 # Compute response curve
 psi <- matrix(NA, nrow = n.x, ncol = n.samp)
-
 for (i in 1:n.x) {
   eta <- beta0 + beta_closed * closed_seq[i]
   psi[i, ] <- 1 / (1 + exp(-eta))   # inverse logit
@@ -82,41 +84,50 @@ df_closed <- data.frame(
 
 # Create plot
 p_closed <- ggplot(df_closed, aes(x = closed_prop, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Proportion of closed habitat",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Terrain
 ```{r}
 # Extract posterior samples
 beta0 <- top_model$beta.comm.samples[, "(Intercept)"]
-beta_slope <- top_model$beta.comm.samples[, "scale(slope)"]
+beta_rough <- top_model$beta.comm.samples[, "scale(rough_range)"]
 
 # Create gradient on ORIGINAL scale
-slope_seq <- seq(
-  min(occ_data$occ.covs$slope, na.rm = TRUE),
-  max(occ_data$occ.covs$slope, na.rm = TRUE),
+rough_seq <- seq(
+  min(occ_data$occ.covs$rough_range, na.rm = TRUE),
+  max(occ_data$occ.covs$rough_range, na.rm = TRUE),
   length.out = 100
 )
 
 # Scale to match model
-slope_scaled <- (slope_seq - mean(occ_data$occ.covs$slope, na.rm = TRUE)) /
-                sd(occ_data$occ.covs$slope, na.rm = TRUE)
+rough_scaled <- (rough_seq - mean(occ_data$occ.covs$rough_range, na.rm = TRUE)) /
+                sd(occ_data$occ.covs$rough_range, na.rm = TRUE)
 
 n.samp <- length(beta0)
-n.x <- length(slope_seq)
+n.x <- length(rough_seq)
 
 # Compute response
 psi <- matrix(NA, nrow = n.x, ncol = n.samp)
 
 for (i in 1:n.x) {
-  eta <- beta0 + beta_slope * slope_scaled[i]
+  eta <- beta0 + beta_rough * rough_scaled[i]
   psi[i, ] <- 1 / (1 + exp(-eta))
 }
 
@@ -126,23 +137,32 @@ psi.low  <- apply(psi, 1, quantile, 0.025)
 psi.high <- apply(psi, 1, quantile, 0.975)
 
 # Combine into dataframe
-df_slope <- data.frame(
-  slope = slope_seq,
+df_rough <- data.frame(
+  rough = rough_seq,
   mean = psi.mean,
   low = psi.low,
   high = psi.high
 )
 
 # Create plot
-p_slope <- ggplot(df_slope, aes(x = slope, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+p_rough <- ggplot(df_rough, aes(x = rough, y = mean)) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    x = "Slope",
+    x = "Terrain roughness",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Human pop
@@ -189,14 +209,23 @@ df_hum <- data.frame(
 
 # Create plot
 p_hum <- ggplot(df_hum, aes(x = log_hum_pop, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Log human population density",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## WDPA
@@ -248,14 +277,23 @@ df_wdpa <- data.frame(
 
 # Create plot
 p_wdpa <- ggplot(df_wdpa, aes(x = WDPA, y = mean)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = low, ymax = high), width = 0.2) +
+  geom_point(sze = 3, color = "#276221") +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.2, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    x = "WDPA category",
+    x = "Protected area category",
     y = "Mean community occupancy probability"
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Rainfall
@@ -301,14 +339,23 @@ df_precip <- data.frame(
 
 # Create plot
 p_precip <- ggplot(df_precip, aes(x = precip, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    x = "Precipitation",
+    x = "Average annual precipitation (mm)",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Clay
@@ -354,14 +401,23 @@ df_clay <- data.frame(
 
 # Plot
 p_clay <- ggplot(df_clay, aes(x = clay, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    x = "Clay content",
+    x = "Percentage clay content",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Water Distance
@@ -407,14 +463,23 @@ df_water <- data.frame(
 
 # Plot
 p_water <- ggplot(df_water, aes(x = water_dist, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
-    x = "Distance to water",
+    x = "Distance to water (m)",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Temperature
@@ -460,40 +525,170 @@ df_temp <- data.frame(
 
 # Plot (x-axis on original scale)
 p_temp <- ggplot(df_temp, aes(x = temp_seas, y = mean)) +
-  geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) +
-  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = low, ymax = high), fill = "#276221", alpha = 0.2) +
+  geom_line(linewidth = 1, color = "#276221") +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     x = "Temperature seasonality",
     y = NULL
   ) +
-  theme_minimal()
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank()
+  )
 ```
 
 ## Put plots all together
 
 ```{r}
-library(patchwork)
-
-(p_closed + p_slope + p_hum +
- p_wdpa + p_temp + p_precip +
- p_clay + p_water) +
-  plot_layout(ncol = 3) &
+# blank object for 9th grid
+blank <- ggplot() +
+  xlim(0, 1) +      
+  ylim(0, 1) +     
+  theme_classic() +
   theme(
-    axis.title.y = element_text(size = 10),
-    axis.title.x = element_text(size = 10)
+    axis.text.y       = element_text(hjust = 1, face = "bold", colour = "white"),
+    axis.text.x       = element_text(face = "bold", colour = "white"),
+    axis.title.x      = element_text(face = "bold", colour = "white"),
+    axis.title.y      = element_text(face = "bold", colour = "white"),
+    axis.line         = element_line(colour = "white"),
+    axis.ticks        = element_line(colour = "white"),
+    panel.border      = element_blank(),
+    panel.background  = element_rect(fill = "white", colour = NA),
+    panel.grid        = element_blank(),
+    plot.background   = element_rect(fill = "white", colour = NA)
   )
+
+# plot together
+all_plot <- (p_closed | p_rough | p_hum ) /
+ (p_wdpa | p_temp | p_precip ) /
+ (p_clay | p_water | blank)
+all_plot
 ```
 
 # Species association plots
 
+## Species individual naive and predicted occupancy for comparison
+
+```{r}
+# --- Species occupancy table (model + naive) ---
+
+z <- top_model$z.samples
+y <- top_model$y
+
+n.samp <- dim(z)[1]
+n.sp   <- dim(z)[2]
+n.site <- dim(z)[3]
+
+sp.names <- dimnames(y)[[1]]
+
+# --- Model-based occupancy ---
+occ.sp <- matrix(NA, nrow = n.samp, ncol = n.sp)
+
+for (s in 1:n.samp) {
+  z_s <- z[s, , ]   # species × sites
+  occ.sp[s, ] <- rowMeans(z_s)
+}
+
+occ.mean <- apply(occ.sp, 2, mean)
+occ.low  <- apply(occ.sp, 2, quantile, 0.025)
+occ.high <- apply(occ.sp, 2, quantile, 0.975)
+
+# --- Naive occupancy ---
+# detect if species observed at a site (any replicate = 1)
+y_det <- apply(y, c(1, 2), max, na.rm = TRUE)  # species × site
+
+naive_occ <- rowMeans(y_det)
+
+# --- Combine into table ---
+occ_table <- data.frame(
+  species = sp.names,
+  naive_occupancy = naive_occ,
+  model_occupancy = occ.mean,
+  low_95 = occ.low,
+  high_95 = occ.high
+)
+
+# optional: sort
+occ_table <- occ_table[order(-occ_table$model_occupancy), ]
+
+occ_table
+```
+
+
+## Co-occurence plot
+
+```{r}
+# Extract dimensions
+z <- top_model$z.samples
+n.samp <- dim(z)[1]
+n.sp   <- dim(z)[2]
+n.site <- dim(z)[3]
+
+# Create blank matrix
+cooc.sum <- matrix(0, n.sp, n.sp)
+
+# Calculate average co-occurence
+for (s in 1:n.samp) {
+  z_s <- matrix(z[s, , ], nrow = n.sp, ncol = n.site)
+  # joint occurrence across sites
+  cooc <- tcrossprod(z_s) / n.site
+  cooc.sum <- cooc.sum + cooc
+}
+
+# Order species by size
+size_order <- c(
+  "Lion",
+  "Leopard",
+  "Spotted hyaena",
+  "Striped hyaena",
+  "African wild dog",
+  "Cheetah",
+  "Side-striped jackal",
+  "Black-backed jackal",
+  "Honey badger",
+  "Caracal",
+  "Serval",
+  "Bat-eared fox",
+  "Aardwolf",
+  "African civet",
+  "African wildcat"
+)
+
+# Mean co-occurence and attatch species names
+cooc.mean <- cooc.sum / n.samp
+rownames(cooc.mean) <- sp.names
+colnames(cooc.mean) <- sp.names
+cooc.mean <- cooc.mean[size_order, size_order]
+
+# Plot
+par(family = "sans", font = 2)  # bold labels
+
+corrplot(
+  cooc.mean,
+  is.corr   = FALSE,          # not a correlation matrix (0–1 co‑occurrence)
+  method    = "color",
+  type      = "lower",
+  diag      = FALSE,
+  addCoef.col = "black",
+  number.cex  = 0.6,
+  tl.col      = "black",
+  col.lim   = c(0, 1),        # because cooc.mean is 0–1
+  col       = colorRampPalette(c("white", "#276221"))(200)
+)
+```
+
 ## Residual correlation matrix
 
 ```{r}
-library(corrplot)
-
+# Extract posterior latent‑rate samples (lambda.samples), then store the number of MCMC samples, the number of species, and the species names for downstream summaries or plots.
 lam <- as.matrix(top_model$lambda.samples)
-
 n.samp <- nrow(lam)
 n.sp <- length(dimnames(top_model$y)[[1]])
 sp.names <- dimnames(top_model$y)[[1]]
@@ -501,8 +696,10 @@ sp.names <- dimnames(top_model$y)[[1]]
 # infer number of factors
 n.factors <- length(unique(as.integer(sub("^.*-", "", colnames(lam)))))
 
+# create blank species by species matrix
 corr.sum <- matrix(0, n.sp, n.sp)
 
+# For each posterior MCMC sample, construct the factor‑loading matrix, compute the implied covariance matrix, convert it to a correlation matrix, and accumulate the correlation matrices across samples into a species‑by‑species correlation summary.
 for (s in 1:n.samp) {
   L <- matrix(lam[s, ], nrow = n.sp, ncol = n.factors, byrow = TRUE)
   Sigma <- L %*% t(L)
@@ -511,11 +708,15 @@ for (s in 1:n.samp) {
   corr.sum <- corr.sum + Corr
 }
 
+# Compute the mean species‑by‑species correlation matrix from the accumulated posterior correlation matrices, set the diagonal to 1 (perfect self‑correlation), and assign species names as both row and column labels for easier interpretation and plotting.
 corr.mean <- corr.sum / n.samp
 diag(corr.mean) <- 1
 rownames(corr.mean) <- sp.names
 colnames(corr.mean) <- sp.names
+corr.mean <- corr.mean[size_order, size_order]
 
+# Plot
+par(family = "sans", font = 2)
 corrplot(
   corr.mean,
   method = "color",
@@ -524,38 +725,249 @@ corrplot(
   addCoef.col = "black",
   number.cex = 0.6,
   tl.col = "black",
-  col.lim = c(-1, 1)
+  col.lim = c(-1, 1),
+  col = colorRampPalette(c("#c30000", "white", "#276221"))(200)
 )
 ```
 
-## Co-occurence plot
+# Individual species response curves
+
+## Create function to make species plots
 
 ```{r}
-cooc.sum <- matrix(0, n.sp, n.sp)
-
-for (s in 1:n.samp) {
-  z_s <- matrix(z[s, , ], nrow = n.sp, ncol = n.site)
-  # joint occurrence across sites
-  cooc <- tcrossprod(z_s) / n.site
-  cooc.sum <- cooc.sum + cooc
+make_species_curve <- function(focal_var, xlab_text, scaled = FALSE) {
+  
+  beta <- as.matrix(top_model$beta.samples)
+  sp.names <- dimnames(top_model$y)[[1]]
+  
+  # original-scale gradient for plotting
+  x_seq <- seq(
+    min(occ_data$occ.covs[[focal_var]], na.rm = TRUE),
+    max(occ_data$occ.covs[[focal_var]], na.rm = TRUE),
+    length.out = 100
+  )
+  
+  # scale if the variable was scaled in the model
+  if (scaled) {
+    x_use <- (x_seq - mean(occ_data$occ.covs[[focal_var]], na.rm = TRUE)) /
+      sd(occ_data$occ.covs[[focal_var]], na.rm = TRUE)
+    term_name <- paste0("scale(", focal_var, ")")
+  } else {
+    x_use <- x_seq
+    term_name <- focal_var
+  }
+  
+  curve_df <- do.call(rbind, lapply(sp.names, function(sp) {
+    
+    b0 <- beta[, paste0("(Intercept)-", sp)]
+    b1 <- beta[, paste0(term_name, "-", sp)]
+    
+    psi_mean <- sapply(x_use, function(x) mean(plogis(b0 + b1 * x)))
+    
+    data.frame(
+      x = x_seq,
+      mean = psi_mean,
+      species = sp
+    )
+  }))
+  
+  curve_df$species <- factor(curve_df$species, levels = sp.names)
+  
+  ggplot(curve_df, aes(x = x, y = mean, color = species, linetype = species)) +
+    geom_line(linewidth = 1) +
+    scale_y_continuous(limits = c(0, 1)) +
+    scale_color_manual(values = grDevices::hcl.colors(length(sp.names), "Dark 3")) +
+    scale_linetype_manual(values = rep(c("solid", "dashed", "dotted", "dotdash"),
+                                       length.out = length(sp.names))) +
+    labs(
+      x = xlab_text,
+      y = "Occupancy probability",
+      color = "Species",
+      linetype = "Species"
+    ) +
+    theme_classic(base_size = 10) +
+    theme(
+      axis.text.y = element_text(hjust = 1, face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.line = element_line(),
+      axis.ticks = element_line(),
+      panel.border = element_blank()
+    )
 }
-
-cooc.mean <- cooc.sum / n.samp
-
-rownames(cooc.mean) <- sp.names
-colnames(cooc.mean) <- sp.names
-
-corrplot(
-  cooc.mean,
-  is.corr = FALSE,
-  method = "color",
-  type = "lower",
-  diag = FALSE,
-  addCoef.col = "black",
-  number.cex = 0.6,
-  tl.col = "black",
-  title = "Joint occupancy probability"
-)
 ```
 
+## Make continuous plots
+
+```{r}
+p_temp_species   <- make_species_curve("temp_seas", "Temperature seasonality", scaled = TRUE)
+p_precip_species <- make_species_curve("precip", "Average annual precipitation (mm)", scaled = TRUE)
+p_clay_species   <- make_species_curve("clay", "Percentage clay content", scaled = TRUE)
+p_water_species  <- make_species_curve("water_dist", "Distance to water (m)", scaled = TRUE)
+p_closed_species <- make_species_curve("closed_prop", "Proportion of closed habitat", scaled = FALSE)
+p_rough_species  <- make_species_curve("rough_range", "Terrain roughness", scaled = TRUE)
+p_hum_species    <- make_species_curve("log_hum_pop", "Log human population density", scaled = TRUE)
+```
+
+## Plots protected area 
+
+```{r}
+beta <- as.matrix(top_model$beta.samples)
+sp.names <- dimnames(top_model$y)[[1]]
+
+# WDPA levels in the data
+wdpa_vals <- sort(unique(occ_data$occ.covs$WDPA))
+
+# Build dataframe of posterior mean occupancy by WDPA category for each species
+curve_df <- do.call(rbind, lapply(sp.names, function(sp) {
+  
+  b0 <- beta[, paste0("(Intercept)-", sp)]
+  
+  wdpa_means <- sapply(wdpa_vals, function(w) {
+    
+    # baseline = intercept
+    eta <- b0
+    
+    # add WDPA effect if not the reference category
+    wdpa_term <- paste0("as.factor(WDPA)", w, "-", sp)
+    
+    if (wdpa_term %in% colnames(beta)) {
+      eta <- eta + beta[, wdpa_term]
+    }
+    
+    mean(plogis(eta))
+  })
+  
+  data.frame(
+    WDPA = factor(wdpa_vals, levels = wdpa_vals),
+    mean = wdpa_means,
+    species = sp
+  )
+}))
+
+curve_df$species <- factor(curve_df$species, levels = sp.names)
+
+# Plot
+p_wdpa_species <- ggplot(curve_df, aes(x = WDPA, y = mean, color = species, linetype = species, group = species)) +
+  geom_point(size = 2) +
+  geom_line(linewidth = 0.8) +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_color_manual(values = grDevices::hcl.colors(length(sp.names), "Dark 3")) +
+  scale_linetype_manual(values = rep(c("solid", "dashed", "dotted", "dotdash"),
+                                     length.out = length(sp.names))) +
+  labs(
+    x = "Protected area category",
+    y = "Occupancy probability",
+    color = "Species",
+    linetype = "Species"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    axis.text.y = element_text(hjust = 1, face = "bold"),
+    axis.text.x = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    panel.border = element_blank(),
+    legend.position = "none"
+  )
+
+p_wdpa_species
+
+# Remove legend completly
+p_wdpa_species <- p_wdpa_species + guides(color = "none", linetype = "none")
+```
+
+## Combine
+
+```{r}
+blank <- plot_spacer()
+
+allspecies_plot <-
+  (p_closed_species + theme(axis.title.y = element_blank()) |
+   p_rough_species  + theme(axis.title.y = element_blank()) |
+   p_hum_species    + theme(axis.title.y = element_blank())) /
+  (p_wdpa_species   + theme(axis.title.y = element_text()) |
+   p_temp_species   + theme(axis.title.y = element_blank()) |
+   p_precip_species + theme(axis.title.y = element_blank())) /
+  (p_clay_species   + theme(axis.title.y = element_blank()) |
+   p_water_species  + theme(axis.title.y = element_blank()) |
+   blank) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+```
+
+## Create table
+
+```{r}
+# --- Community + species coefficient table (one row per species) ---
+
+fmt_ci <- function(est, low, high) {
+  sprintf("%.2f [%.2f, %.2f]", est, low, high)
+}
+
+summarise_draws <- function(x) {
+  x <- as.numeric(x)
+  c(
+    estimate = mean(x, na.rm = TRUE),
+    lower_95 = as.numeric(quantile(x, 0.025, na.rm = TRUE)),
+    upper_95 = as.numeric(quantile(x, 0.975, na.rm = TRUE))
+  )
+}
+
+# Community-level samples
+beta_comm <- as.matrix(top_model$beta.comm.samples)
+comm_terms <- colnames(beta_comm)
+
+comm_tab <- data.frame(
+  row = "Community",
+  stringsAsFactors = FALSE
+)
+
+for (term in comm_terms) {
+  s <- summarise_draws(beta_comm[, term])
+  comm_tab[[term]] <- fmt_ci(
+    as.numeric(s["estimate"]),
+    as.numeric(s["lower_95"]),
+    as.numeric(s["upper_95"])
+  )
+}
+
+# Species-level samples
+beta_sp <- as.matrix(top_model$beta.samples)
+sp.names <- dimnames(top_model$y)[[1]]
+
+species_tabs <- lapply(sp.names, function(sp) {
+  out <- data.frame(
+    row = sp,
+    stringsAsFactors = FALSE
+  )
+  
+  for (term in comm_terms) {
+    col_name <- paste0(term, "-", sp)
+    if (col_name %in% colnames(beta_sp)) {
+      s <- summarise_draws(beta_sp[, col_name])
+      out[[term]] <- fmt_ci(
+        as.numeric(s["estimate"]),
+        as.numeric(s["lower_95"]),
+        as.numeric(s["upper_95"])
+      )
+    } else {
+      out[[term]] <- NA_character_
+    }
+  }
+  
+  out
+})
+
+# Combine community + species into one table
+coef_table <- do.call(rbind, c(list(comm_tab), species_tabs))
+rownames(coef_table) <- coef_table$row
+coef_table$row <- NULL
+
+coef_table
+write.csv(coef_table, "coefficient_table.csv", row.names = TRUE)
+```
 
