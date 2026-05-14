@@ -519,6 +519,7 @@ spatial_covs["WMA_02",  "WDPA"] <- 6
 ```
 
 # Convert site to a numeric
+
 ```{r}
 spatial_covs$site_id <- as.numeric(as.factor(spatial_covs$site))
 ```
@@ -564,7 +565,7 @@ plot(null_model, 'beta', density = FALSE)
 summary(null_model)
 ```
 
- ## Select detection probability covariates
+## Select detection probability covariates
 
 ```{r}
 # Full model
@@ -733,7 +734,6 @@ precipseas_waic
 #precipitation best 
 ```
 
-
 # Run multivariate models
 
 ```{r}
@@ -787,7 +787,7 @@ comb_model <- lfMsPGOcc(occ.formula = ~ scale(temp_seas) + scale(precip) + scale
                        n.report = 5000,
                        n.samples = 50000,
                        n.burn = 3000,
-                       n.thin = 4,
+                       n.thin = 20,
                        n.chains = 3)
 
 summary(cont_model)

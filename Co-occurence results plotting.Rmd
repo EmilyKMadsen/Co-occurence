@@ -9,9 +9,13 @@ output: word_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Load librarys
+
 ```{r}
 library(dplyr)
 library(tidyr)
+library(tibble)
+library(stringr)
 library(purrr)
 library(lubridate)
 library(spOccupancy)
@@ -28,20 +32,55 @@ top_model <- readRDS("top_model.rds")
 occ_data <- readRDS("occ_data.rds")
 ```
 
-## Posterior checks
+# Posterior checks
 
 ```{r}
 # Trace plots for convergence
 plot(top_model, 'beta', density = FALSE)
+summary(top_model)
 
-# Model validation --------------------------------------------------------
 # Perform a posterior predictive check to assess model fit.
-ppc.out <- ppcOcc(top_model, fit.stat = "chi-squared", group = 1)
-summary(ppc.out)
+#ppc.out <- ppcOcc(top_model, fit.stat = "freeman-tukey", group = 1)
+#summary(ppc.out)
 
-# Posterior summaries -----------------------------------------------------
-# Concise summary of main parameter estimates
-summary(top_model, level = 'both')
+# The number of species in the data set
+N <- nrow(top_model$y)
+# Here I save the associated Bayesian p-value from each posterior predictive
+# check for each species. You can save other information from the check, 
+# but this is a small summary that won't take a lot of memory.
+bayesian.p.vals.by.sp <- rep(NA, N)
+mean.diff.sp <- rep(NA, N)
+for (i in 1:N) {
+  print(paste0("Currently on species ", i, " out of ", N))
+  # Stuff to extract the detection random effects
+  n.re.levels <- length(unique(top_model$X.p.re)) 
+  re.indx <- ((i - 1) * n.re.levels + 1):(i * n.re.levels)
+  # Generate the necessary object for ppcOcc for a single species at a time
+  one.sp.out <- list(y = top_model$y[i, , ], # data set for the current species
+		     z.samples = top_model$z.samples[, i, ], # latent occupancy values for the current species
+		     n.post = top_model$n.post, # number of posterior samples for each chain
+		     n.chains = top_model$n.chains, # number of chains
+		     X.p = top_model$X.p, # the detection covariates
+		     pRE = top_model$pRE, # Information on if there are any random effects
+		     X.p.re = top_model$X.p.re, # Item for random effects
+		     # Detection regression coefficient samples for current species only
+		     alpha.samples = top_model$alpha.samples[, seq(i, ncol(top_model$alpha.samples), by = N)], 
+         # Detection random effect variables
+         alpha.star.samples = top_model$alpha.star.samples[, re.indx])
+  # Set the class of one.sp.out, just to get get ppcOcc to work
+  class(one.sp.out) <- 'PGOcc'
+  # Calculate the posterior predictive check, see ?ppcOcc for different arguments
+  # Note this step may take a few minutes for your data set.
+  ppc.out <- ppcOcc(one.sp.out, fit.stat = 'freeman-tukey', group = 1)
+  bayesian.p.vals.by.sp[i] <- mean(ppc.out$fit.y.rep > ppc.out$fit.y)
+  mean.diff.sp[i] <- mean(ppc.out$fit.y.rep - ppc.out$fit.y)
+  # Remove objects and release memory to help minimize RAM costs
+  rm(ppc.out, one.sp.out)
+  gc()
+}
+# Look at Bayesian p-values to assess model fit (want them to be close to 0.5)
+bayesian.p.vals.by.sp
+mean.diff.sp
 ```
 
 # Community occurence plots
@@ -684,6 +723,52 @@ corrplot(
 )
 ```
 
+## Co-occurence accounting for low occupancy rates.
+
+```{r}
+# Create blank matrix
+cooc.cond <- matrix(0, n.sp, n.sp)
+
+# Calculate conditional co-occurrence P(B present | A present)
+for (s in 1:n.samp) {
+  z_s <- matrix(z[s, , ], nrow = n.sp, ncol = n.site)
+  
+  # For each species pair, count co-occurrences / occurrences of A
+  for (i in 1:n.sp) {
+    for (j in 1:n.sp) {
+      if (i != j) {
+        a_present <- sum(z_s[i, ])  # sites where A is present
+        if (a_present > 0) {
+          cooc.cond[i, j] <- cooc.cond[i, j] + sum(z_s[i, ] * z_s[j, ]) / a_present
+        }
+      }
+    }
+  }
+}
+
+# Mean conditional co-occurrence
+cooc.cond.mean <- cooc.cond / n.samp
+rownames(cooc.cond.mean) <- sp.names
+colnames(cooc.cond.mean) <- sp.names
+cooc.cond.mean <- cooc.cond.mean[size_order, size_order]
+
+# Plot - full matrix now since it's asymmetric
+par(family = "sans", font = 2)
+corrplot(
+  cooc.cond.mean,
+  is.corr     = FALSE,
+  method      = "color",
+  type        = "full",
+  diag        = FALSE,
+  addCoef.col = "black",
+  number.cex  = 0.6,
+  tl.col      = "black",
+  col.lim     = c(0, 1),
+  col         = colorRampPalette(c("white", "#276221"))(200)
+)
+```
+
+
 ## Residual correlation matrix
 
 ```{r}
@@ -726,79 +811,278 @@ corrplot(
   number.cex = 0.6,
   tl.col = "black",
   col.lim = c(-1, 1),
-  col = colorRampPalette(c("#c30000", "white", "#276221"))(200)
+  col = colorRampPalette(c("#40004B", "white", "#276221"))(200)
 )
 ```
 
-# Individual species response curves
-
-## Create function to make species plots
+## Make network diagram
 
 ```{r}
-make_species_curve <- function(focal_var, xlab_text, scaled = FALSE) {
-  
-  beta <- as.matrix(top_model$beta.samples)
-  sp.names <- dimnames(top_model$y)[[1]]
-  
-  # original-scale gradient for plotting
-  x_seq <- seq(
-    min(occ_data$occ.covs[[focal_var]], na.rm = TRUE),
-    max(occ_data$occ.covs[[focal_var]], na.rm = TRUE),
-    length.out = 100
+library(ggplot2)
+library(rphylopic)
+library(scales)
+
+# Extract all pairwise correlations (no threshold)
+edge.mat <- which(upper.tri(corr.mean), arr.ind = TRUE)
+
+edges <- data.frame(
+  from = rownames(corr.mean)[edge.mat[,1]],
+  to   = colnames(corr.mean)[edge.mat[,2]],
+  corr = corr.mean[edge.mat]
+)
+
+# Create nodes and cluster ordering
+nodes <- data.frame(name = rownames(corr.mean))
+hc <- hclust(as.dist(1 - corr.mean))
+nodes$name <- rownames(corr.mean)[hc$order]
+n <- nrow(nodes)
+
+# Circular layout
+nodes$angle <- seq(0, 2*pi, length.out = n + 1)[-(n+1)]
+nodes$x <- cos(nodes$angle)
+nodes$y <- sin(nodes$angle)
+
+# Label positions
+nodes$x_lab <- cos(nodes$angle) * 1.05
+nodes$y_lab <- sin(nodes$angle) * 1.05
+nodes$x_lab[side_idx] <- cos(nodes$angle[side_idx]) * 1.15
+nodes$y_lab[side_idx] <- sin(nodes$angle[side_idx]) * 1.15
+
+# move up (increase y)
+nodes$y_lab[nodes$name == "Cheetah"] <- nodes$y_lab[nodes$name == "Cheetah"] + 0.05
+nodes$y_lab[nodes$name == "Serval"] <- nodes$y_lab[nodes$name == "Serval"] + 0.05
+nodes$y_lab[nodes$name == "Lion"] <- nodes$y_lab[nodes$name == "Lion"] + 0.05
+nodes$y_lab[nodes$name == "Aardwolf"] <- nodes$y_lab[nodes$name == "Aardwolf"] + 0.15
+
+# move down (decrease y)
+nodes$y_lab[nodes$name == "African wildcat"] <- nodes$y_lab[nodes$name == "African wildcat"] - 0.05
+
+# move left
+nodes$x_lab[nodes$name == "Spotted hyaena"] <- nodes$x_lab[nodes$name == "Spotted hyaena"] - 1.5
+
+# Adjust label spacing for sides
+top_bottom_idx <- abs(nodes$angle - pi/2) < pi/6 | abs(nodes$angle - 3*pi/2) < pi/6
+side_idx <- !top_bottom_idx
+side_offset <- 1.15
+nodes$x_lab[side_idx] <- cos(nodes$angle[side_idx]) * side_offset
+nodes$y_lab[side_idx] <- sin(nodes$angle[side_idx]) * side_offset
+
+# UUID lookup (your correct mapping)
+lookup <- data.frame(
+  name = c(
+    "Lion",
+    "African wildcat",
+    "African civet",
+    "Leopard",
+    "Side-striped jackal",
+    "Striped hyaena",
+    "Honey badger",
+    "Black-backed jackal",
+    "Aardwolf",
+    "African wild dog",
+    "Caracal",
+    "Spotted hyaena",
+    "Bat-eared fox",
+    "Cheetah",
+    "Serval"
+  ),
+  uuid = c(
+    "de81a69c-3bdf-4486-b587-803e5b4acc64",
+    "a3fb4098-a1e6-4f1c-9054-782ac8ab0eac",
+    "cff1a00e-860b-4aaa-bdfa-eed4f917fb2b",
+    "9f33e613-944c-483d-8275-cc59a1b470c2",
+    "2bbc62f3-696f-4ac1-a235-6aeff17d2a88",
+    "efd94e33-3966-4808-af47-3c58b333f9af",
+    "8952c22d-1d0b-4658-b8ff-348df8aff18f",
+    "94ab5d83-cdfe-4da8-b412-2528c843ffae",
+    "e1072c6c-39fb-4375-aec5-dc0405ed1e3f",
+    "832e5f72-4291-4916-bbbe-3a540b01fa1a",
+    "0495f1b4-f9a0-4ba7-ae8f-bd89aa104c42",
+    "f1b665ae-8fe9-42e4-b03a-4e9ae8213244",
+    "39dc7ce6-3700-4d4a-9fdf-d84d8a0482e4",
+    "0acb7026-d98d-4064-a009-0940580ea4b8",
+    "01895510-7c27-489d-b441-6f72b1f562d2"
   )
-  
-  # scale if the variable was scaled in the model
-  if (scaled) {
-    x_use <- (x_seq - mean(occ_data$occ.covs[[focal_var]], na.rm = TRUE)) /
-      sd(occ_data$occ.covs[[focal_var]], na.rm = TRUE)
-    term_name <- paste0("scale(", focal_var, ")")
-  } else {
-    x_use <- x_seq
-    term_name <- focal_var
-  }
-  
-  curve_df <- do.call(rbind, lapply(sp.names, function(sp) {
-    
-    b0 <- beta[, paste0("(Intercept)-", sp)]
-    b1 <- beta[, paste0(term_name, "-", sp)]
-    
-    psi_mean <- sapply(x_use, function(x) mean(plogis(b0 + b1 * x)))
-    
-    data.frame(
-      x = x_seq,
-      mean = psi_mean,
-      species = sp
-    )
-  }))
-  
-  curve_df$species <- factor(curve_df$species, levels = sp.names)
-  
-  ggplot(curve_df, aes(x = x, y = mean, color = species, linetype = species)) +
-    geom_line(linewidth = 1) +
-    scale_y_continuous(limits = c(0, 1)) +
-    scale_color_manual(values = grDevices::hcl.colors(length(sp.names), "Dark 3")) +
-    scale_linetype_manual(values = rep(c("solid", "dashed", "dotted", "dotdash"),
-                                       length.out = length(sp.names))) +
-    labs(
-      x = xlab_text,
-      y = "Occupancy probability",
-      color = "Species",
-      linetype = "Species"
-    ) +
-    theme_classic(base_size = 10) +
-    theme(
-      axis.text.y = element_text(hjust = 1, face = "bold"),
-      axis.text.x = element_text(face = "bold"),
-      axis.title.x = element_text(face = "bold"),
-      axis.title.y = element_text(face = "bold"),
-      axis.line = element_line(),
-      axis.ticks = element_line(),
-      panel.border = element_blank()
-    )
-}
+)
+
+# Match UUIDs without reordering
+nodes$uuid <- lookup$uuid[match(nodes$name, lookup$name)]
+
+# Adjust silhouette sizes
+nodes$img_size <- 0.1
+nodes$img_size[nodes$name == "African civet"] <- 0.06
+nodes$img_size[nodes$name == "Honey badger"] <- 0.06
+
+# Attach coordinates to edges
+edges$x <- nodes$x[match(edges$from, nodes$name)]
+edges$y <- nodes$y[match(edges$from, nodes$name)]
+edges$xend <- nodes$x[match(edges$to, nodes$name)]
+edges$yend <- nodes$y[match(edges$to, nodes$name)]
+
+# Create curved edges
+edge_curves <- do.call(rbind, lapply(1:nrow(edges), function(i) {
+  x0 <- edges$x[i]
+  y0 <- edges$y[i]
+  x1 <- edges$xend[i]
+  y1 <- edges$yend[i]
+  cx <- (x0 + x1) / 2 * 0.6
+  cy <- (y0 + y1) / 2 * 0.6
+  t <- seq(0, 1, length.out = 50)
+  data.frame(
+    x = (1 - t)^2 * x0 + 2 * (1 - t) * t * cx + t^2 * x1,
+    y = (1 - t)^2 * y0 + 2 * (1 - t) * t * cy + t^2 * y1,
+    corr = as.numeric(edges$corr[i]),
+    group = i
+  )
+}))
+
+# Continuous linewidth scaling (fixes stepping issue)
+edge_curves$width <- rescale(abs(edge_curves$corr), to = c(0.1, 2))
+
+nodes[nodes$name == "Spotted hyaena", c("x_lab", "y_lab")]
+nodes$x_lab[nodes$name == "Spotted hyaena"] <- -1.2
+
+# Build plot
+network <- ggplot() +
+  geom_path(
+    data = edge_curves,
+    aes(x = x, y = y, group = group, colour = corr),
+      linewidth = edge_curves$width,
+      alpha = 0.9
+  ) +
+  geom_phylopic(
+    data = nodes,
+    aes(x = x, y = y, uuid = uuid, size = img_size),
+    fill = "black"
+  ) +
+  scale_size_identity() +
+  geom_text(
+    data = nodes,
+    aes(x = x_lab, y = y_lab, label = name),
+    size = 3
+  ) +
+  scale_colour_gradient2(
+    name = "Residual correlation",
+    low = "#40004B",
+    mid = "white",
+    high = "#276221",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  coord_equal(clip = "off") +
+  guides(linewidth = "none") +
+  theme_void()
 ```
 
-## Make continuous plots
+
+## Alternative network
+
+```{r}
+library(igraph)
+library(ggplot2)
+library(scales)
+
+# Build graph from your correlation matrix
+corr.threshold <- 0.3
+
+edge.mat <- which(corr.mean > corr.threshold & upper.tri(corr.mean), arr.ind = TRUE)
+
+edges <- data.frame(
+  from = rownames(corr.mean)[edge.mat[,1]],
+  to   = colnames(corr.mean)[edge.mat[,2]],
+  corr = corr.mean[edge.mat]
+)
+
+g <- graph_from_data_frame(
+  edges,
+  directed = FALSE,
+  vertices = data.frame(name = rownames(corr.mean))
+)
+
+# Alignment
+set.seed(123)
+lay <- layout_with_fr(g)
+
+deg <- degree(g)
+main_idx <- which(deg > 0)
+iso_idx  <- which(deg == 0)
+
+# centre based on main cluster
+center <- colMeans(lay[main_idx, ])
+
+# radius of main cluster
+main_radius <- max(sqrt(rowSums((lay[main_idx, ] - center)^2)))
+
+# place isolates close to centre 
+iso_radius <- main_radius * 0.6
+angles <- seq(0, 2*pi, length.out = length(iso_idx) + 1)[-(length(iso_idx) + 1)]
+lay[iso_idx, 1] <- center[1] + cos(angles) * iso_radius
+lay[iso_idx, 2] <- center[2] + sin(angles) * iso_radius
+
+# Extract node positions
+nodes <- data.frame(
+  name = V(g)$name,
+  x = lay[,1],
+  y = lay[,2]
+)
+
+# Add community detection (groups species with similar connections)
+comm <- cluster_louvain(g)
+nodes$community <- as.factor(comm$membership)
+
+# community membership
+membership <- comm$membership
+
+# strength of pulling (0 = none, 1 = collapse)
+pull_strength <- 0.3
+for (k in unique(membership)) {
+  idx <- which(membership == k)
+  # centre of this community
+  comm_center <- colMeans(lay[idx, , drop = FALSE])
+  # move nodes toward their community centre
+  lay[idx, ] <- lay[idx, ] * (1 - pull_strength) + 
+                matrix(comm_center, nrow = length(idx), ncol = 2, byrow = TRUE) * pull_strength
+}
+
+# Attach coordinates to edges
+edges$x <- nodes$x[match(edges$from, nodes$name)]
+edges$y <- nodes$y[match(edges$from, nodes$name)]
+edges$xend <- nodes$x[match(edges$to, nodes$name)]
+edges$yend <- nodes$y[match(edges$to, nodes$name)]
+
+network2 <- ggplot() +
+  geom_segment(
+    data = edges,
+    aes(x = x, y = y, xend = xend, yend = yend, linewidth = corr),
+    colour = "#276221",
+    alpha = 0.6
+  ) +
+  geom_point(
+    data = nodes,
+    aes(x = x, y = y, fill = community),
+    shape = 21,
+    colour = "black",
+    size = 4,
+    stroke = 0.5
+  ) +
+  geom_text(
+    data = nodes,
+    aes(x = x, y = y, label = name),
+    family = "Calibri",
+    fontface = "bold",
+    size = 3,
+    vjust = -1
+  ) +
+  scale_linewidth(
+    name = "Residual correlation (>0.5)",
+    range = c(0.2, 6)
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_void(base_family = "Calibri")
+```
+
+
+# Make continuous plots
 
 ```{r}
 p_temp_species   <- make_species_curve("temp_seas", "Temperature seasonality", scaled = TRUE)
@@ -899,10 +1183,10 @@ allspecies_plot <-
   theme(legend.position = "right")
 ```
 
-## Create table
+# Create table
 
 ```{r}
-# --- Community + species coefficient table (one row per species) ---
+# Community + species coefficient table (one row per species)
 
 fmt_ci <- function(est, low, high) {
   sprintf("%.2f [%.2f, %.2f]", est, low, high)
@@ -969,5 +1253,120 @@ coef_table$row <- NULL
 
 coef_table
 write.csv(coef_table, "coefficient_table.csv", row.names = TRUE)
+```
+
+## Calculate probability of directions
+
+```{r}
+posterior_direction <- function(x) {
+  max(mean(x > 0, na.rm = TRUE), mean(x < 0, na.rm = TRUE))
+}
+
+make_pd_table <- function(mod, sp.names) {
+  
+  # community-level
+  beta_comm <- as.matrix(mod$beta.comm.samples)
+  comm_df <- tibble(
+    taxon = "community",
+    variable = colnames(beta_comm),
+    pd = apply(beta_comm, 2, posterior_direction)
+  )
+  
+  # species-level
+  beta_sp <- as.matrix(mod$beta.samples)
+  sp_df <- tibble(
+    term = colnames(beta_sp),
+    pd = apply(beta_sp, 2, posterior_direction),
+    variable = sub("-.*$", "", term),
+    taxon = sub("^[^-]+-", "", term)
+  ) %>%
+    select(taxon, variable, pd)
+  
+  # combine and reshape
+  bind_rows(comm_df, sp_df) %>%
+    mutate(
+      taxon = factor(taxon, levels = c("community", sp.names))
+    ) %>%
+    arrange(taxon) %>%
+    pivot_wider(names_from = variable, values_from = pd) %>%
+    mutate(across(-taxon, ~ round(.x, 3)))
+}
+
+pd_table <- make_pd_table(top_model, sp.names)
+pd_table
+write.csv(pd_table, "pd_table.csv", row.names = TRUE)
+```
+
+## Full results table
+
+```{r}
+# One table with: beta, pd, and 95% CRI in each cell
+# Format: beta, pd [lower, upper]
+
+fmt_cell <- function(draws) {
+  draws <- as.numeric(draws)
+  
+  est <- mean(draws, na.rm = TRUE)
+  low <- as.numeric(quantile(draws, 0.025, na.rm = TRUE))
+  high <- as.numeric(quantile(draws, 0.975, na.rm = TRUE))
+  pd <- max(mean(draws > 0, na.rm = TRUE), mean(draws < 0, na.rm = TRUE))
+  
+  sprintf("%.2f, %.2f [%.2f, %.2f]", est, pd, low, high)
+}
+
+# Community + species coefficient table
+make_full_table <- function(top_model, sp.names) {
+  
+  # Community-level samples
+  beta_comm <- as.matrix(top_model$beta.comm.samples)
+  comm_terms <- colnames(beta_comm)
+  
+  comm_tab <- data.frame(
+    row = "Community",
+    stringsAsFactors = FALSE
+  )
+  
+  for (term in comm_terms) {
+    comm_tab[[term]] <- fmt_cell(beta_comm[, term])
+  }
+  
+  # Species-level samples
+  beta_sp <- as.matrix(top_model$beta.samples)
+  
+  species_tabs <- lapply(sp.names, function(sp) {
+    out <- data.frame(
+      row = sp,
+      stringsAsFactors = FALSE
+    )
+    
+    for (term in comm_terms) {
+      col_name <- paste0(term, "-", sp)
+      
+      if (col_name %in% colnames(beta_sp)) {
+        out[[term]] <- fmt_cell(beta_sp[, col_name])
+      } else {
+        out[[term]] <- NA_character_
+      }
+    }
+    
+    out
+  })
+  
+  # Combine community + species
+  coef_table <- do.call(rbind, c(list(comm_tab), species_tabs))
+  rownames(coef_table) <- coef_table$row
+  coef_table$row <- NULL
+  
+  coef_table
+}
+
+# Build the table
+sp.names <- dimnames(top_model$y)[[1]]
+full_table <- make_full_table(top_model, sp.names)
+
+full_table
+
+# Save it
+write.csv(full_table, "full_table.csv", row.names = TRUE)
 ```
 
